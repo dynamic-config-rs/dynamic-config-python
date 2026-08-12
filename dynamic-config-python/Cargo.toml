@@ -1,0 +1,55 @@
+[package]
+name = "dynamic-config-python"
+# Its own version, not the workspace's — the one place in this repository
+# where that is true, and deliberately.
+#
+# The ten crates on crates.io move in lockstep because they pin each other
+# exactly; a `dynamic-config-etcd` that did not follow `dynamic-config`
+# would not resolve. The wheel has no such tie: it *embeds* the engine
+# rather than depending on a published version of it, and its audience
+# reads a different changelog. Bumping it for a Rust-only fix would ask
+# every Python user to upgrade for a release with nothing in it for them.
+#
+# So this moves when *this* changes — a new Python API, a behaviour
+# change, or an engine bump worth shipping — and `maturin upload
+# --skip-existing` makes a release that changed nothing here a no-op.
+version = "0.1.0"
+edition.workspace = true
+# Its own floor, not the workspace's 1.71: PyO3 needs more than the core does.
+rust-version = "1.85"
+license.workspace = true
+description = "Python bindings for dynamic-config: Rust resolves, Pydantic validates"
+repository.workspace = true
+readme = "README.md"
+# Never on crates.io: a `cdylib` extension module has no Rust consumers. It
+# ships to PyPI as `dynamic-config-py`, built by maturin — the release
+# pipeline's fourth wave.
+publish = false
+
+# cargo-release owns the ten lockstep crates and leaves this one alone:
+# `shared-version` would otherwise drag it to the workspace number on
+# every release, which is the exact coupling the version above exists to
+# avoid.
+[package.metadata.release]
+release = false
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+dynamic-config = { workspace = true, features = [
+    "json",
+    "toml",
+    "yaml",
+    "watch",
+    "async",
+    "dotenv",
+] }
+# `extension-module` on by default: a wheel must not link libpython, and a
+# plain `cargo build --workspace` must not need it either — the symbols are
+# resolved by the interpreter at import time. The cost is that this crate
+# has no linkable Rust *test* target, which is why the workspace test
+# recipes exclude it; its suite is pytest, and it runs in CI's `python` job.
+pyo3 = { version = "0.29", features = ["abi3-py39", "extension-module"] }
+serde_json = "1.0.127"

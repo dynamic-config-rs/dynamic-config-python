@@ -1,0 +1,146 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+# `dynamic-config` on PyPI is an unrelated single-release package from
+# 2022; this distribution takes the qualified name and keeps the import
+# name every example spells.
+name = "dynamic-config-py"
+description = "Hot-reloadable configuration for Python: Rust resolves, your schema validates"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Cevat Batuhan Tolon", email = "cevatbatuhan.tolon@gmail.com" }]
+keywords = ["config", "configuration", "hot-reload", "settings", "watch", "pydantic", "dataclasses"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+# None. A `dataclasses.dataclass` is a schema here, and the engine is
+# compiled in — so the base install is the wheel and nothing else. Pydantic
+# is an extra because it is a choice, not a requirement.
+dependencies = []
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ctolon/dynamic-config"
+Repository = "https://github.com/ctolon/dynamic-config"
+Documentation = "https://ctolon.github.io/dynamic-config/"
+Changelog = "https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/CHANGELOG.md"
+
+[project.optional-dependencies]
+# `pip install dynamic-config-py` gives you dataclass schemas and the whole
+# engine. Each extra buys one more kind of schema, and nothing else.
+pydantic = ["pydantic>=2.0"]
+# pydantic-settings needs Pydantic itself; naming both means the extra is
+# complete on its own rather than only when the other one happens to be in.
+pydantic-settings = ["pydantic>=2.0", "pydantic-settings>=2.0"]
+all = ["pydantic>=2.0", "pydantic-settings>=2.0"]
+test = ["pytest>=7", "pytest-asyncio>=0.23"]
+# Everything needed to reproduce the gate `just python` runs.
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "mypy>=1.11",
+    "ruff>=0.6",
+    "maturin>=1.7,<2.0",
+]
+
+[tool.maturin]
+# A mixed project: the compiled engine is `dynamic_config._core`, and the
+# package around it is ordinary Python — the typing, the decorator and the
+# asyncio bridge are all clearer there, and none of them is on the fast
+# path.
+python-source = "python"
+module-name = "dynamic_config._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+# ── Linting ────────────────────────────────────────────────────────────
+#
+# Ruff, at the floor this package supports rather than the interpreter
+# that happens to run it: a `X | Y` in a runtime position compiles fine
+# on 3.12 and breaks a 3.9 user, and the linter is where that gets
+# caught rather than in CI's oldest matrix entry.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+src = ["python", "tests", "examples", "benchmarks"]
+# Python only. Recent ruff also formats the code blocks inside Markdown,
+# which here means re-aligning the comment columns that make the README's
+# snippets readable — a formatter improving prose is not an improvement.
+include = ["*.py", "*.pyi"]
+
+[tool.ruff.lint]
+select = [
+    "F",     # pyflakes — the errors that are always errors
+    "E", "W",# pycodestyle
+    "I",     # import sorting, so a merge never argues about it
+    "N",     # naming
+    "D",     # pydocstyle — this package is documented, and stays that way
+    "UP",    # pyupgrade, bounded by target-version
+    "B",     # bugbear — the mistakes that read as intentional
+    "A",     # shadowed builtins
+    "C4",    # comprehensions
+    "ISC",   # implicit string concatenation
+    "PIE",
+    "PT",    # pytest style
+    "RET",   # returns
+    "SIM",   # simplifications
+    "TID",   # tidy imports
+    "PTH",   # pathlib over os.path
+    "ERA",   # commented-out code
+    "RUF",
+]
+ignore = [
+    # D203/D211 and D212/D213 are mutually exclusive pairs; these are the
+    # halves that match the house style — no blank line before a class
+    # docstring, summary on the first line.
+    "D203",
+    "D213",
+    # "Returns the model" is a description, not a command. The docstrings
+    # here describe; imperative mood would fight every one of them.
+    "D401",
+    # The engine's own errors carry the context; a message assigned to a
+    # name first would be noise in a package this size.
+    "EM101", "EM102",
+    # PEP 604 — `X | None` — is 3.10 at *runtime*, and `from __future__
+    # import annotations` does not save it here: Pydantic resolves a
+    # model's annotations when the class is built, so the string is
+    # evaluated and a 3.9 user gets a TypeError building the model.
+    # Neither vermin nor the type checker catches that (both read the
+    # annotation as lazy), so only the 3.9 CI job would — which is to
+    # say, after the linter had already asked for the break. PEP 585
+    # (`list[int]`, UP006/UP035) is 3.9 at runtime and stays enabled.
+    "UP007", "UP045",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests name themselves — `test_a_rejected_reload_keeps_the_previous_model`
+# is the docstring. Fixtures and helpers defined inside a test are local
+# to it, and `assert` is the point.
+"tests/*" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "S101", "B011"]
+# Examples are scripts: they print, they narrate in comments rather than
+# in a docstring on every inner definition, and the models they declare
+# are read at the point they are declared. `Depends(...)` in a default is
+# FastAPI's own API (B008), not an accident.
+"examples/*" = ["D101", "D102", "D103", "D105", "D107", "B008", "T201", "INP001"]
+"benchmarks/*" = ["D101", "D103", "T201", "INP001"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.isort]
+known-first-party = ["dynamic_config"]
