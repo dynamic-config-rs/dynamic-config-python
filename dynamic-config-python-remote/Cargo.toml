@@ -1,0 +1,125 @@
+[package]
+name = "dynamic-config-python-remote"
+# Its own version, like the base wheel's and for the same reason: the wheel
+# embeds the engine rather than depending on a published version of it.
+#
+# It tracks `dynamic-config-python` rather than the workspace, because the
+# two ship together — the remote wheel is useless without the base one, and
+# `dynamic_config.remote` in the base wheel is the door into this one. A
+# release that moves the base wheel and not this one is fine (the extra keeps
+# working); the reverse is not, which is why the compatibility floor is
+# declared in `pyproject.toml` rather than assumed.
+version = "0.1.0"
+edition.workspace = true
+# The highest floor of anything linked in, measured rather than declared:
+# PyO3, etcd and `gix` ask for 1.85, and `aws-sdk-sts`, `async-nats` and
+# `redis` ask for 1.88 — so the wheel that carries all eight stores asks for
+# 1.88.
+rust-version = "1.88"
+license.workspace = true
+description = "The Rust remote stores for dynamic-config's Python bindings, as a second wheel"
+repository.workspace = true
+readme = "README.md"
+# Never on crates.io: a `cdylib` extension module has no Rust consumers. It
+# ships to PyPI as `dynamic-config-py-remote`.
+publish = false
+
+# cargo-release owns the ten lockstep crates and leaves the two wheels alone.
+[package.metadata.release]
+release = false
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+# Both extension modules are called `_core` — maturin derives the name from
+# `module-name` in `pyproject.toml`, so neither can be renamed — and rustdoc
+# writes both to `target/doc/_core`, which fails `cargo doc --workspace`.
+# This one steps out of rustdoc: it ships to PyPI rather than docs.rs, its
+# documented surface is the Python API in the book, and the base extension
+# keeps its rustdoc for whoever reads the binding.
+doc = false
+
+[dependencies]
+# The engine, for `Error`, `Fetched` and `Format` — and, since `Git`, for the
+# three format features as well.
+#
+# This wheel still never *loads* a configuration: it hands a document to the
+# base wheel, which does. But `Git` is the one store here that reads several
+# files as one document, and folding a set into one document is a parse and a
+# re-render — `dynamic_config_store_core::documents::merged`, the same fold
+# every store crate performs. Without these, `GitKeys.several` and
+# `GitKeys.prefix` would fail at the first fetch with a message telling a
+# Python caller to add a Cargo feature to a crate they are not compiling.
+#
+# A single file is unaffected either way: one document is handed to the loader
+# byte for byte, never parsed and re-rendered, so comments and key order
+# survive.
+dynamic-config = { workspace = true, features = [
+    "async",
+    "json",
+    "toml",
+    "yaml",
+] }
+# The shared redaction, so a store URL loses its password by exactly the same
+# rule here as it does in the store crates rather than by a second copy of it.
+dynamic-config-store-core = { workspace = true }
+# The eight stores. Pinned exactly, like every other cross-crate dependency
+# here — a path with no version requirement is a wildcard, and `deny.toml`
+# refuses those (`bans.wildcards = "deny"`): a wildcard is a dependency that
+# cannot be resolved reproducibly.
+#
+# `=` rather than `^`, matching `[workspace.dependencies]`: these crates and
+# the engine they wrap move in lockstep, and a mismatch between the engine
+# statically linked here and the one a store was compiled against is exactly
+# the class of thing an exact pin makes impossible. `cargo release`'s
+# `shared-version` rewrites both numbers when the workspace is bumped.
+#
+# `tls` on two of them, because two of them keep their TLS stack behind a
+# feature: `Etcd::with_tls` and `Redis::with_tls` do not exist without it, and
+# a wheel is compiled weeks before anybody installs it — there is no later
+# moment at which a user could turn the feature on. The other six carry a TLS
+# stack already and gate nothing.
+#
+# `dynamic-config-etcd/tls-roots` is deliberately *not* on. It resolves to
+# `tonic/tls-native-roots`, which only makes `ClientTlsConfig::with_native_roots()`
+# available — a call `dynamic-config-etcd` never makes — so it would add
+# `rustls-native-certs` to every wheel and change nothing at all. The
+# consequence is documented rather than hidden: etcd over TLS from Python
+# trusts the authority you name and no other.
+dynamic-config-consul = { version = "=0.6.0", path = "../dynamic-config-consul" }
+dynamic-config-etcd = { version = "=0.6.0", path = "../dynamic-config-etcd", features = [
+    "tls",
+] }
+dynamic-config-firestore = { version = "=0.6.0", path = "../dynamic-config-firestore" }
+# `gix`, pure Rust, with no feature to choose: the store crate turns on exactly
+# what a shallow single-ref fetch needs and this wheel has no reason to differ.
+# It declares 1.85 and so does not move the floor below, which is 1.88 for
+# other reasons.
+dynamic-config-git = { version = "=0.6.0", path = "../dynamic-config-git" }
+dynamic-config-nats = { version = "=0.6.0", path = "../dynamic-config-nats" }
+dynamic-config-redis = { version = "=0.6.0", path = "../dynamic-config-redis", features = [
+    "tls",
+] }
+dynamic-config-s3 = { version = "=0.6.0", path = "../dynamic-config-s3" }
+dynamic-config-vault = { version = "=0.6.0", path = "../dynamic-config-vault" }
+# S3's credential surface, and only S3's. The other six take a string; the
+# AWS SDK takes a `ProvideCredentials` implementation, so this wheel has to
+# name the two crates that trait and its `Credentials` live in to write the
+# shim in `src/s3.rs`. The feature list is `dynamic-config-s3`'s, exactly:
+# a second set here would resolve to a different TLS stack in the same wheel.
+aws-config = { version = "1.6", default-features = false, features = [
+    "behavior-version-latest",
+    "rt-tokio",
+    "default-https-client",
+] }
+# `1.2.2`: `aws-config` itself requires it, and this crate names the type
+# directly for `src/s3.rs`'s `ProvideCredentials` shim — so under
+# `-Z direct-minimal-versions` a floor of `^1.2` pins 1.2.0 and contradicts
+# the SDK it is a shim for.
+aws-credential-types = { version = "1.2.2", default-features = false }
+pyo3 = { version = "0.29", features = ["abi3-py39", "extension-module"] }
+# The one runtime this wheel owns. `rt-multi-thread` rather than
+# `current_thread`: `Runtime::block_on` on a current-thread runtime is driven
+# by the calling thread, so two Python threads refreshing two stores would
+# serialise behind each other for reasons neither could see.
+tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "time"] }

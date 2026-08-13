@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import typing
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -29,21 +30,31 @@ if TYPE_CHECKING:
 
         model: type
 
+        # Each body is an explicit `...` rather than the docstring alone:
+        # pyright reads a docstring-only body as a function that falls off
+        # the end returning `None`, and reports four `reportReturnType`
+        # errors a user's Pylance would show them too. mypy does not, which
+        # is exactly why both run in the gate.
         @property
         def kind(self) -> str:
             """What to call this in a message: "Pydantic model", "dataclass"."""
+            ...
 
         def validate(self, data: Any) -> Any:
             """Builds an instance, or raises describing what is wrong."""
+            ...
 
         def field_names(self) -> list[str]:
             """Every key a configuration file may use for a top-level field."""
+            ...
 
         def secret_paths(self) -> list[str]:
             """Every dotted path whose value must not reach a diagnostic."""
+            ...
 
         def is_instance(self, value: Any) -> bool:
             """Whether ``value`` is an instance of this schema."""
+            ...
 
 
 def _unwrap(annotation: Any) -> list[Any]:
@@ -100,12 +111,34 @@ def is_dataclass_type(candidate: Any) -> bool:
     return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
 
 
-def schema_for(model: Any) -> Schema:
+def is_values_type(candidate: Any) -> bool:
+    """Whether ``candidate`` is `Values`, or a subclass of it."""
+    from ._values import Values
+
+    return isinstance(candidate, type) and issubclass(candidate, Values)
+
+
+def schema_for(model: Any, secrets: Sequence[str] | None = None) -> Schema:
     """The adapter for whatever kind of schema ``model`` is.
 
-    Pydantic first, because a Pydantic dataclass is also a dataclass and
-    the one that validates is the one to use.
+    Parameters:
+        model: the class the configuration was declared with — a Pydantic
+            model, a plain dataclass, or `Values` for a configuration
+            with no schema at all.
+        secrets: dotted paths whose values must never reach a diagnostic.
+            Only a schemaless configuration has any use for them: a
+            declared model says which of its own fields are secret, and
+            this is how the one that cannot declare says it.
+
+    `Values` first, because it is neither of the other two; then
+    Pydantic, because a Pydantic dataclass is also a dataclass and the
+    one that validates is the one to use.
     """
+    if is_values_type(model):
+        from ._values import ValuesSchema
+
+        return ValuesSchema(model, list(secrets or ()))
+
     if is_pydantic_model(model) or is_pydantic_dataclass(model):
         from ._pydantic import PydanticSchema
 
@@ -117,8 +150,8 @@ def schema_for(model: Any) -> Schema:
         return DataclassSchema(model)
 
     raise TypeError(
-        "a configuration needs a schema class — a Pydantic model or a "
-        f"dataclass — not {model!r}"
+        "a configuration needs a schema class — a Pydantic model, a "
+        f"dataclass, or Values for one with no schema — not {model!r}"
     )
 
 

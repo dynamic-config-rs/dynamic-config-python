@@ -1,0 +1,89 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+# The base wheel is `dynamic-config-py`; this is the same name with what it
+# adds on the end, so `pip install dynamic-config-py[remote]` reads as what
+# it is. It is never installed on its own by anybody sensible — the import
+# name to write is `dynamic_config.remote`, which is in the base package.
+name = "dynamic-config-py-remote"
+description = "The Rust remote stores (Consul, etcd, Firestore, NATS, Redis, S3, Vault) for dynamic-config-py"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Cevat Batuhan Tolon", email = "cevatbatuhan.tolon@gmail.com" }]
+keywords = ["config", "configuration", "hot-reload", "etcd", "vault", "consul", "redis", "s3", "remote"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+# The base wheel, and nothing else. Not an optional dependency and not a
+# duck-typed hope: this package imports `dynamic_config`'s `Format`,
+# `RemoteSource`, `AuthError` and `RemoteError`, and a store here is only
+# useful when handed to a `DynamicConfig` there.
+#
+# The floor is a lower bound rather than an exact pin, because the surface
+# this uses is four names that have been stable since the base wheel had a
+# remote path at all. It is not `==` for the reason the Rust crates are: a
+# wheel that pinned its sibling exactly would make every base-wheel patch a
+# forced upgrade of this one.
+dependencies = ["dynamic-config-py>=0.1.0"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ctolon/dynamic-config"
+Repository = "https://github.com/ctolon/dynamic-config"
+Documentation = "https://ctolon.github.io/dynamic-config/python/remote-wheel.html"
+Changelog = "https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python-remote/CHANGELOG.md"
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-asyncio>=0.23"]
+
+[tool.maturin]
+# A mixed project, the same shape as the base wheel's: the clients are
+# compiled, and the credential resolution, the typing and the error
+# translation are ordinary Python.
+python-source = "python"
+module-name = "dynamic_config_remote._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# ── Linting ────────────────────────────────────────────────────────────
+#
+# The base wheel's configuration, deliberately identical: two packages that
+# ship together and are read side by side should not be formatted by two
+# sets of rules. The comments explaining each choice are there, in
+# `dynamic-config-python/pyproject.toml`.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+src = ["python", "tests", "examples"]
+include = ["*.py", "*.pyi"]
+
+[tool.ruff.lint]
+select = [
+    "F", "E", "W", "I", "N", "D", "UP", "B", "A", "C4", "ISC", "PIE", "PT",
+    "RET", "SIM", "TID", "PTH", "ERA", "RUF",
+]
+ignore = ["D203", "D213", "D401", "EM101", "EM102", "UP007", "UP045"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "S101", "B011"]
+# Examples are scripts: they print, and they narrate in comments rather than
+# in a docstring on every inner definition.
+"examples/*" = ["D101", "D102", "D103", "D105", "D107", "T201", "INP001"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.isort]
+known-first-party = ["dynamic_config", "dynamic_config_remote"]

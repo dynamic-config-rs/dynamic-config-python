@@ -45,11 +45,43 @@ dynamic-config = { workspace = true, features = [
     "watch",
     "async",
     "dotenv",
+    # `telemetry::Exposition`, which `_core.Exposition` is a door on. It
+    # pulls in nothing: the Prometheus text format is a wire encoding, not a
+    # crate, so the wheel still picks no metrics ecosystem for the service
+    # importing it — the same reason the Rust feature carries no dependency.
+    "telemetry",
 ] }
 # `extension-module` on by default: a wheel must not link libpython, and a
 # plain `cargo build --workspace` must not need it either — the symbols are
 # resolved by the interpreter at import time. The cost is that this crate
 # has no linkable Rust *test* target, which is why the workspace test
 # recipes exclude it; its suite is pytest, and it runs in CI's `python` job.
-pyo3 = { version = "0.29", features = ["abi3-py39", "extension-module"] }
+#
+# `abi3-py39` is not here: it moved to the `abi3` feature below, so the
+# free-threaded wheel can be built without it.
+pyo3 = { version = "0.29", features = ["extension-module"] }
 serde_json = "1.0.127"
+
+[features]
+# One wheel per platform covering every interpreter from 3.9 up — the reason
+# the remote stores are a second distribution rather than a Cargo feature
+# here. Every ordinary build gets it by doing nothing.
+default = ["abi3"]
+abi3 = ["pyo3/abi3-py39"]
+
+# There is deliberately no `free-threaded` feature, because cargo features are
+# additive: nothing can switch abi3 *off* by being switched *on*. The
+# free-threaded wheel is therefore `--no-default-features`.
+#
+# **What actually selects the ABI is the interpreter, not this feature.**
+# Measured: `maturin build -i python3.14t` produces a version-specific
+# `cp314-cp314t` wheel whether or not `abi3` is on, because abi3 has no
+# free-threaded form and both maturin and PyO3 fall back — maturin warns
+# "abi3 does not yet support CPython 3.14t", PyO3 warns that it is falling
+# back "for backward compatibility". Without `-i`, maturin builds abi3 against
+# no interpreter in particular and ignores the one on PATH.
+#
+# The feature is kept anyway, and for one reason: with it off, pyo3 is never
+# *asked* for abi3, so the free-threaded build does not depend on a fallback
+# its own author has labelled a compatibility path. A manifest that says what
+# it means beats one that is rescued.

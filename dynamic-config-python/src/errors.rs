@@ -68,6 +68,14 @@ create_exception!(
 );
 create_exception!(
     _core,
+    AuthError,
+    DynamicConfigError,
+    "A credential was rejected, or could not be obtained.\n\n\
+     Distinct from `RemoteError`, which is the store being unreachable: \
+     waiting will not fix this one."
+);
+create_exception!(
+    _core,
     DecryptError,
     DynamicConfigError,
     "An encrypted source could not be decrypted."
@@ -89,6 +97,7 @@ fn class_for(py: Python<'_>, kind: ErrorKind) -> Bound<'_, PyType> {
         ErrorKind::Env => py.get_type::<EnvError>(),
         ErrorKind::Invalid => py.get_type::<InvalidError>(),
         ErrorKind::Remote => py.get_type::<RemoteError>(),
+        ErrorKind::Auth => py.get_type::<AuthError>(),
         ErrorKind::Decrypt => py.get_type::<DecryptError>(),
         ErrorKind::Backend => py.get_type::<BackendError>(),
         // `ErrorKind` is `#[non_exhaustive]`: a kind this binding predates
@@ -172,6 +181,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("EnvError", module.py().get_type::<EnvError>())?;
     module.add("InvalidError", module.py().get_type::<InvalidError>())?;
     module.add("RemoteError", module.py().get_type::<RemoteError>())?;
+    module.add("AuthError", module.py().get_type::<AuthError>())?;
     module.add("DecryptError", module.py().get_type::<DecryptError>())?;
     module.add("BackendError", module.py().get_type::<BackendError>())?;
 

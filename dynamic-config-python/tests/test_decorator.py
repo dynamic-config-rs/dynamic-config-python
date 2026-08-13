@@ -96,3 +96,64 @@ def test_a_field_the_decorator_would_shadow_is_refused(workspace: Path) -> None:
 
     assert "reload" in str(failure.value)
     assert "DynamicConfig" in str(failure.value), "the message says what to do instead"
+
+
+def test_the_configured_mixin_is_the_form_that_type_checks(workspace: Path) -> None:
+    """The decorator alone attaches at runtime, which no checker can see.
+
+    `tests/typing/usage.py` is where the *types* are asserted, under
+    `mypy --strict`. This is the runtime half: the mixin's methods
+    delegate through the configuration the decorator set, and inheriting
+    it changes nothing a user can observe at runtime.
+    """
+    from dynamic_config import Configured
+
+    Path("config.toml").write_text('[db]\nhost = "mixed-in"\nport = 6543\n')
+
+    @dynamic_config(key="db", files=["config.toml"])
+    class Database(Configured, BaseModel):
+        host: str = "localhost"
+        port: int = 5432
+
+    Database.config.init()
+
+    assert Database.current().host == "mixed-in"
+    assert Database.try_current() is not None
+    assert Database.source_of("port") is not None
+    assert "6543" in str(Database.explain("port"))
+
+    Path("config.toml").write_text('[db]\nhost = "reloaded"\nport = 1\n')
+    Database.reload()
+
+    assert Database.current().host == "reloaded"
+
+    # The mixin declares methods, not fields: the model is unchanged.
+    assert "config" not in Database.model_fields
+    assert "current" not in Database.model_fields
+
+
+def test_the_mixin_and_the_decorator_agree(workspace: Path) -> None:
+    """Both forms read the same configuration the same way."""
+    from dynamic_config import Configured
+
+    Path("config.toml").write_text('[db]\nhost = "shared"\n')
+
+    @dynamic_config(key="db", files=["config.toml"], init=True)
+    class Plain(BaseModel):
+        host: str = "localhost"
+
+    @dynamic_config(key="db", files=["config.toml"], init=True)
+    class Mixed(Configured, BaseModel):
+        host: str = "localhost"
+
+    assert Plain.current().host == Mixed.current().host == "shared"
+
+
+def test_reading_before_decoration_says_which_class(workspace: Path) -> None:
+    from dynamic_config import Configured
+
+    class Undecorated(Configured, BaseModel):
+        host: str = "localhost"
+
+    with pytest.raises(AttributeError, match="config"):
+        Undecorated.current()

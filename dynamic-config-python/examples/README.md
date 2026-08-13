@@ -18,7 +18,7 @@ python examples/01_quick_start.py
 | [`06_multi_tenant`](06_multi_tenant.py) | One model, one configuration per tenant, each with its own snapshot |
 | [`07_secrets_and_recovery`](07_secrets_and_recovery.py) | `SecretStr` as the only declaration, a redacted cache, and starting from it when the source breaks |
 | [`08_diagnostics`](08_diagnostics.py) | `source_of`, `is_set`, `explain`, `check`, `snapshot`, `changed_paths` |
-| [`09_testing_overrides`](09_testing_overrides.py) | Pinning configuration in a test without touching the filesystem |
+| [`09_testing_overrides`](09_testing_overrides.py) | Pinning configuration in a test without touching the filesystem: `with config.overrides(...)`, a nested block, and one that raises |
 | [`10_fastapi_service`](10_fastapi_service.py) | FastAPI: configuration as a dependency in both `async def` and `def` endpoints, a watcher owned by the app's lifespan and started with `watch_async`, and a test override (`pip install fastapi httpx`) |
 | [`11_flask_service`](11_flask_service.py) | Flask: read per request rather than copied into `app.config` (`pip install flask`) |
 | [`12_django_settings`](12_django_settings.py) | Django: static settings for Django, a reloadable half for the values operators turn (`pip install django`) |
@@ -27,11 +27,15 @@ python examples/01_quick_start.py
 | [`15_pydantic_settings`](15_pydantic_settings.py) | An existing `BaseSettings` class, its declaration translated into engine sources by `from_settings` (`pip install pydantic-settings`) |
 | [`16_callbacks`](16_callbacks.py) | Every callback shape: `on_reload`, the decorator, `on_change` filters, a scoped guard, handing work to the thread that owns it, and an async follower |
 | [`17_dataclasses`](17_dataclasses.py) | A plain `dataclasses.dataclass` as the schema, with no Pydantic installed — structural validation, secrets in `field(metadata=...)`, and the same diagnostics |
+| [`18_python_remote_source`](18_python_remote_source.py) | A remote store written in Python: `RemoteSource`, an explicit `refresh_remote()`, the GIL measured across a 200 ms fetch, and a store that starts refusing its credential |
+| [`19_document_shape`](19_document_shape.py) | A file with no section header (`whole_document()`), a key the model does not declare — ignored, forbidden, or refused by a dataclass — two files holding half a model each, and a field nothing supplies |
+| [`20_schemaless`](20_schemaless.py) | `Values`: a configuration with no model class, read by dotted path — the same layers and diagnostics, `check()` saying it compared no field names, and `secrets=` buying the redacting cache |
+| [`21_decorator_whole_document`](21_decorator_whole_document.py) | `@dynamic_config` argument by argument, and `whole_document=True` against a file with no header — including `key=""` for a configuration with nothing to call itself |
 
 Examples 10 to 12 need their framework installed and 15 needs
 pydantic-settings; 17 needs nothing at all, which is its point — it is
 the base install. The rest need Pydantic (`pip install
-dynamic-config-py[pydantic]`). All seventeen run in CI, because an
+dynamic-config-py[pydantic]`). All twenty-one run in CI, because an
 example nobody runs is documentation that has already started rotting —
 and the three framework ones are driven again by
 `tests/test_integration.py`, which asserts what they answer rather than

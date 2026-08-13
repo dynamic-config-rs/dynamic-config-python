@@ -26,8 +26,159 @@ breaking.
 
 ## [Unreleased]
 
+## 0.1.0 — 2026-08-14
+
 ### Added
 
+- **`Values`: a configuration with no schema class.** The Python half of
+  the crate's `Dynamic<Value>`, for the keys a program learns at run time
+  rather than declares — a plugin host, a feature-flag table, a tool
+  reading a file it did not write. Pass the class where a model goes and
+  every load hands back a `Mapping` read by dotted path
+  (`values["cache.ttl"]`), with every value already a plain Python
+  object. The same layers, profiles, watcher, cache, hooks and
+  diagnostics as any other configuration.
+
+  It gives up exactly what it never declared, and says so rather than
+  assuming: `check()` reports `unknown_checked = False` — an empty
+  unknown-key list from a configuration with no field names is not an
+  all-clear — and a `redacted` or `fingerprint` cache is **refused**
+  until `DynamicConfig(Values, key=…, secrets=[…])` names what to
+  redact, rather than writing a file that claims a redaction it did not
+  perform. `secrets=` works for a declared model too, where it adds to
+  what the model already says. `examples/20_schemaless.py` runs all of
+  it.
+
+- **`Report.unknown_checked`**, and a `str(report)` that renders the same
+  table the Rust crate prints. Without the flag, a report from a
+  configuration with no field list was indistinguishable from a clean
+  one.
+
+- **`dynamic_config.remote.TlsConfig`.** The remote wheel's TLS vocabulary,
+  re-exported here with the stores — a private certificate authority and a
+  client certificate, as file paths or PEM bytes. Nothing in this wheel
+  changes: the re-export list is asserted equal to the remote package's own
+  `__all__` by that package's suite, so a name added there and not here
+  fails a test rather than reaching a user as an `ImportError` from the
+  dotted path the documentation tells them to write.
+
+- **The Rust remote stores, as an opt-in second wheel.** `pip install
+  dynamic-config-py[remote]` buys the compiled **Consul, etcd, Firestore,
+  NATS, Redis, S3 and Vault** clients, imported as
+  `dynamic_config.remote`. A pip extra installs
+  distributions and cannot turn on a Cargo feature in a binary compiled
+  weeks ago, so it resolves to a distribution of its own —
+  `dynamic-config-py-remote`, built from the new `dynamic-config-python-remote`
+  crate. The base install is unchanged and importing `dynamic_config.remote`
+  without the extra raises an `ImportError` naming it. Both stores are
+  ordinary `RemoteSource` implementations, so the base wheel needed no
+  change to accept them: nothing Rust crosses between the two extension
+  modules, only a `(document, format)` pair. **Every credential argument
+  accepts a callable**, resolved on every fetch, because a watcher outlives
+  its credentials — a value that has changed rebuilds the client, and one
+  that has not leaves the store's own token cache alone. One tokio runtime,
+  lazily, owned by the remote module and started when the first store that
+  needs one is constructed; the base wheel still refuses the engine's
+  `tokio` feature. See the book's
+  [Remote Stores in Rust](../book/src/python/remote-wheel.md).
+
+  `dynamic_config/remote.py` re-exports exactly what `dynamic_config_remote`
+  exports, and that is now asserted as a **set equality in both suites**.
+  It previously checked only that every name here existed over there, which
+  a base wheel re-exporting *fewer* names satisfies — so the five stores
+  after etcd and Vault were reachable as `from dynamic_config_remote import
+  Redis` while `from dynamic_config.remote import Redis`, the dotted name
+  the documentation tells people to write, was an `ImportError`. The
+  direction that catches a base wheel falling behind is the one that was
+  missing.
+
+- **A remote store can be written in Python.** `RemoteSource` is an ABC
+  with two abstract methods, and an instance of a subclass is a store the
+  Rust engine fetches from:
+
+      class ConfigService(RemoteSource):
+          def fetch(self):
+              return httpx.get(URL, timeout=5).text, Format.JSON
+
+          def describe(self):
+              return "the config service"
+
+      config = DynamicConfig(Database, key="db").remote(ConfigService())
+      config.refresh_remote()
+      config.init()
+
+  New on `DynamicConfig`: `remote(source)` (chains, and unlike the other
+  source methods is allowed after the first load, exactly as the Rust
+  `set_remote` is), `refresh_remote()`, `refresh_remote_async()`,
+  `clear_remote()` and the `remote_description` property. New on the
+  package: `RemoteSource` and `Format`. Fetching is explicit as it is in
+  Rust — a load merges the document last fetched and touches no network —
+  and the remote layer sits above the files and below the environment.
+
+  Three decisions are worth reading before writing one, and each has a
+  test. **The GIL is not held across the fetch:** the design note that
+  preceded this assumed a Python object on the fetch path would stop the
+  process and proposed a worker thread and a channel, and the measurement
+  says otherwise — a `fetch()` doing I/O releases the GIL itself, so a
+  second thread keeps running at 68–102% of its free rate. The worker
+  would also have created the one deadlock this shape does not have: a
+  `fetch()` calling back into the extension would be waiting on the
+  thread it runs on. **The timeout is the `fetch()` implementation's**,
+  because nothing on the Rust side can interrupt Python that has decided
+  not to return; a `KeyboardInterrupt` out of a fetch propagates
+  unchanged rather than becoming a store failure. **A failing `fetch()`
+  is reported, never fatal:** it arrives as `RemoteError` — or
+  `AuthError`, if that is what was raised, so *this credential was
+  refused* stays distinguishable from *the store is unreachable* — with
+  the original attached as `__cause__` and its message deliberately not
+  repeated, because a store's exception routinely carries the URL it
+  called. The previous document, the previous model and the
+  last-known-good cache are all untouched by one.
+
+  `describe()` is asked once, when the source is installed, because the
+  engine reads it on the load path and a load must not re-enter Python.
+- **A free-threading audit, as a book page**
+  ([Free-Threaded CPython](https://ctolon.github.io/dynamic-config/python/free-threading.html)).
+  Every `static`, every `#[pyclass]`, and every place correctness rode on
+  the GIL without saying so. Two fixes came out of it, both below.
+  **Nothing has been run on a free-threaded interpreter**, so the module
+  still ships without `Py_mod_gil = Py_MOD_GIL_NOT_USED` — a
+  free-threaded CPython re-enables the GIL when it imports this, which is
+  the safe default and stays until the suite has actually run without
+  one. The page says what remains, including the abi3 blocker: a
+  `Py_GIL_DISABLED` build has no stable ABI, so supporting it means a
+  second, non-abi3 wheel per platform.
+- **`config.overrides(**values)`, the override layer scoped to a block.**
+  The shape a test wants, because the long hand ends in a cleanup step
+  that is easy to forget — and a forgotten `clear_overrides()` leaks into
+  the next test through whatever configuration the module built:
+
+      with config.overrides(pool_size=1, host="localhost"):
+          ...        # reloaded on entry, and again on the way out
+
+  The exit restores the override layer the block *found* rather than
+  emptying it, so a nested `with` composes and a pin set before the block
+  still stands after it; it restores on an exception too, so a failing
+  assertion does not decide what the next test sees. Dotted paths are
+  spelled with `__` — `pool__max_size=1` — the same nesting rule the
+  environment layer already teaches.
+- **A pytest plugin ships with the package**, found through a `pytest11`
+  entry point, so installing `dynamic-config-py` is the whole setup.
+  `dynamic_config_workspace` is a temporary directory that is also the
+  working directory, so a relative `file("app.toml")` finds this test's
+  copy; `dynamic_config_env("APP_")` unsets the variables a developer's
+  shell would otherwise contribute. Neither is autouse — a plugin that
+  arrives with the wheel should not change what a test sees until the
+  test asks. `dynamic_config.pytest` imports pytest and the standard
+  library and **nothing else**, Pydantic included: it is loaded in every
+  pytest run of every environment this package is installed in, so a
+  dependency there would be a dependency for all of them. This binding's
+  own suite runs on those two fixtures, which is how the thing that ships
+  stays the thing that is tested.
+- **`repr(config)` carries the generation** —
+  `<DynamicConfig Database key='db' generation=3>` — which is what a
+  debugger session wants, and `generation=0` says nothing has installed
+  yet. Still shape-only: no values, ever.
 - **Pydantic is optional, and a `dataclasses.dataclass` is a schema.**
   The base install has no dependencies at all — the engine is compiled
   into the wheel, and the stdlib already has a way to declare a record:
@@ -176,11 +327,99 @@ breaking.
   examples driven the way a test suite drives them, so an example that
   rots fails the suite.
 
+- **Free-threaded CPython 3.14t is supported, and audited rather than
+  assumed.** The module declares `Py_mod_gil = Py_MOD_GIL_NOT_USED`
+  (`#[pymodule(gil_used = false)]`), and a `cp314t` wheel per platform
+  ships beside the abi3 one — `Py_GIL_DISABLED` has no stable ABI, so one
+  wheel cannot cover both. CI's `python-free-threaded` job runs the whole
+  suite on 3.14.0t plus ten further iterations of the threading, shutdown
+  and free-threading tests, and asserts `sys._is_gil_enabled()` is false
+  after importing the extension.
+
+  **3.14t and not 3.13t**: PyO3 0.29 dropped 3.13t, following CPython,
+  which promoted free-threading from experimental to supported in 3.14.
+
+  The audit found no `static` and no `unsendable` `#[pyclass]`, measured
+  two of its own predictions false — the hook lock is not held while hooks
+  run, and the read path costs the same multiple of a plain attribute
+  lookup with and without a GIL — and changed one thing: `_LIVE_CONFIGS`
+  and `_LIVE_WATCHES` are now guarded by a lock, because `weakref.WeakSet`
+  is only as atomic as the GIL makes it and a registry that dropped
+  entries would leave watchers running into finalization. See the book's
+  *Free-Threaded CPython* page for what a green suite still does not
+  prove.
+
+  `abi3` is now a **default** Cargo feature rather than a hard dependency
+  feature, and the free-threaded wheel is built with
+  `--no-default-features`: cargo features are additive, so nothing can turn
+  abi3 *off* by being turned *on*. Ordinary builds are unaffected. What
+  actually selects the ABI is the interpreter — `maturin build -i
+  python3.14t` — and the feature exists so that pyo3 is never *asked* for
+  abi3 rather than rescued by its compatibility fallback.
+
+  The free-threaded wheels are **manylinux x86-64 and aarch64 only**. The
+  macOS and Windows runners were not verified for a free-threaded
+  interpreter; the release job asserts its own wheel tags, so widening it
+  is a matter of running it once.
+
+### Changed
+
+- **Every compiled method now carries a docstring naming each of its
+  parameters**, and the `Config` class documents its constructor
+  arguments where `help()` shows them — a signature a developer had to
+  guess at was a parameter they had to go and read the source for. The
+  decorator's own docstring gained the same list, one row per keyword
+  and the fluent call it stands for.
+
+- **`whole_document()`, and `whole_document=True` on the decorator**: reads
+  each document as this model's values, with no section header —
+  `{"host": "0.0.0.0", "port": 8000}` and nothing above it. The key still
+  names the environment prefix, the cache entry and the diagnostics, and
+  `key=""` is allowed for a configuration with nothing to call itself,
+  whose environment layer is then the prefix alone (`APP_PORT`).
+
+  `examples/19_document_shape.py` runs it, together with the three
+  questions next to it that the binding answers differently from the
+  engine: a key the model does not declare is ignored by a `BaseModel`,
+  refused under `extra="forbid"`, and **always** refused by a dataclass —
+  which has no `extra` setting to consult, so the builder names the field
+  it could not place.
+
+- `changes()` says what it does: it yields the installed model once per
+  wake, latest-wins, rather than one entry per install. `on_reload` is
+  the surface that runs for every install.
+- `Watch.detach()` records that it opts out of the `atexit` sweep — a
+  detached watcher is no longer reachable, which is the trade the call
+  exists to make.
+
 ### Fixed
+
+- **The suite and the examples are held to the 3.9 floor by a test rather
+  than by one CI row.** `from __future__ import annotations` makes every
+  annotation a string, so `list[str] | None` in a model body compiles
+  anywhere and fails at *class creation* on 3.9, where Pydantic resolves
+  it and PEP 604 does not evaluate — which is a slow way to find out, on
+  the one interpreter a laptop may not have. `tests/test_floor_syntax.py`
+  parses both wheels' suites and this one's examples on whatever
+  interpreter is running: no PEP 604 where something evaluates
+  annotations, and nothing newer than 3.9's grammar anywhere.
 
 Everything here came out of a review of the release branch, and each one
 is now pinned by a test.
 
+- **The engine object now implements `__clear__`.** It reported its edges
+  from `__traverse__` and had no way to drop them, so a cycle running
+  through it needed the closure's own `tp_clear` to break — which worked
+  for hooks and would not have for a Python remote source. Both edges are
+  dropped now, which is the shape `tp_traverse`/`tp_clear` are meant to
+  come in.
+- **The shutdown registries are guarded by a lock.** `_LIVE_CONFIGS` and
+  `_LIVE_WATCHES` are `weakref.WeakSet`s mutated from every thread that
+  builds a configuration, and a `WeakSet` is only as atomic as the GIL
+  makes it. A registry that lost an entry would leave a watcher running
+  into finalization — the crash the whole `atexit` sweep exists to
+  prevent. Found by the free-threading audit; it is a latent bug on a
+  free-threaded build rather than a live one today.
 - **A secret inside a container of models was redacted nowhere.** A field
   like `users: list[Credentials]` with a `SecretStr` inside recorded
   `users.password`, while the real paths are `users.0.password` — which
@@ -236,14 +475,24 @@ is now pinned by a test.
   single `fetch_max` now. The GIL happened to serialise it; the invariant
   no longer depends on that.
 
-### Changed
-
-- `changes()` says what it does: it yields the installed model once per
-  wake, latest-wins, rather than one entry per install. `on_reload` is
-  the surface that runs for every install.
-- `Watch.detach()` records that it opts out of the `atexit` sweep — a
-  detached watcher is no longer reachable, which is the trade the call
-  exists to make.
+- **`secrets_dir(path)`** — a directory where each file is one key, which
+  is how Docker and Kubernetes mount credentials. `from_settings`
+  translates a settings class's `secrets_dir` onto it, so the one
+  translation that used to be refused is refused no longer. Provenance
+  names the individual file, which is more than pydantic-settings can
+  say. Values arrive as strings deliberately: a credentials directory is
+  the worst place to guess that `12345` was meant as a number.
+- **`Configured`, the mixin that makes the decorator type-check.** The
+  decorator attaches six members at runtime, and no type checker can see
+  that — `Database.current()` was an `attr-defined` error under
+  `mypy --strict` and offered no completion in an editor, while running
+  perfectly. Inheriting `Configured` declares them where a checker looks;
+  the decorator fills them in, `model_fields` is untouched, and runtime
+  behaviour is identical. The plain decorator still works and is not
+  deprecated — it simply cannot be made visible to a checker.
+  `tests/typing/usage.py` now runs under `mypy --strict` in CI, checking
+  a file written the way a *caller* writes one, because types that
+  regress for a user are invisible to a test suite.
 
 ### Security
 

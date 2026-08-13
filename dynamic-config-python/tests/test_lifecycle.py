@@ -66,6 +66,26 @@ def test_reload_installs_and_bumps_the_generation(workspace: Path) -> None:
     assert config.generation == 2
 
 
+def test_the_repr_carries_the_shape_and_the_generation(workspace: Path) -> None:
+    write("config.toml", 5432, host="a-value-nobody-should-see")
+
+    config = DynamicConfig(Database, key="db").file("config.toml")
+
+    assert repr(config) == "<DynamicConfig Database key='db' generation=0>", (
+        "generation zero is how a debugger sees 'nothing installed yet'"
+    )
+
+    config.init()
+    assert repr(config) == "<DynamicConfig Database key='db' generation=1>"
+
+    write("config.toml", 5433, host="a-value-nobody-should-see")
+    config.reload()
+
+    assert repr(config) == "<DynamicConfig Database key='db' generation=2>"
+    assert "a-value-nobody-should-see" not in repr(config), "shape, never values"
+    assert "5433" not in repr(config)
+
+
 def test_a_rejected_reload_keeps_the_previous_model(workspace: Path) -> None:
     Path("config.toml").write_text("[db]\nport = 1\n")
 

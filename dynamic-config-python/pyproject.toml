@@ -28,6 +28,14 @@ classifiers = [
 dependencies = []
 dynamic = ["version"]
 
+# The shipped pytest plugin, `dynamic_config.pytest`. pytest discovers it
+# through this entry point, so a suite that installs the package has the
+# fixtures — no `pytest_plugins` line, which a non-root `conftest.py` may
+# not carry anyway. The module imports pytest and the standard library and
+# nothing else, so an install with no Pydantic in it is unaffected.
+[project.entry-points.pytest11]
+dynamic_config = "dynamic_config.pytest"
+
 [project.urls]
 Homepage = "https://github.com/ctolon/dynamic-config"
 Repository = "https://github.com/ctolon/dynamic-config"
@@ -42,6 +50,16 @@ pydantic = ["pydantic>=2.0"]
 # complete on its own rather than only when the other one happens to be in.
 pydantic-settings = ["pydantic>=2.0", "pydantic-settings>=2.0"]
 all = ["pydantic>=2.0", "pydantic-settings>=2.0"]
+# The Rust remote stores — etcd and Vault — as a second *wheel*, which is
+# what this extra has to resolve to: pip installs distributions, and cannot
+# turn on a Cargo feature in a binary that was compiled weeks ago on a
+# release runner. `dynamic_config.remote` is the name it fills in, and that
+# module raises an ImportError naming this extra when it is absent.
+#
+# Deliberately **not** in `all`, which is the schema extras: those add a few
+# hundred kilobytes of pure Python, and this adds a gRPC stack. Somebody
+# typing `[all]` to get Pydantic should not get that as well.
+remote = ["dynamic-config-py-remote"]
 test = ["pytest>=7", "pytest-asyncio>=0.23"]
 # Everything needed to reproduce the gate `just python` runs.
 dev = [
@@ -144,3 +162,13 @@ convention = "pep257"
 
 [tool.ruff.lint.isort]
 known-first-party = ["dynamic_config"]
+
+# `dynamic_config/remote.py` re-exports the opt-in second wheel, which is by
+# definition not installed in every environment that type-checks this one —
+# CI's base-wheel job is exactly such an environment, and that is where this
+# was found. `ignore_missing_imports` applies *only* when the module cannot be
+# found: with the extra installed, mypy checks the re-exports as it always
+# would, so the names do not quietly become `Any` for the people who have it.
+[[tool.mypy.overrides]]
+module = "dynamic_config_remote"
+ignore_missing_imports = true

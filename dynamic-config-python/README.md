@@ -8,7 +8,12 @@ pip install dynamic-config-py                     # dataclasses; no dependencies
 pip install dynamic-config-py[pydantic]           # + Pydantic models
 pip install dynamic-config-py[pydantic-settings]  # + BaseSettings classes
 pip install dynamic-config-py[all]                # all of it
+pip install dynamic-config-py[remote]             # + the Rust etcd and Vault clients
 ```
+
+`[all]` is the schema extras — a few hundred kilobytes of pure Python.
+`[remote]` is a **second wheel**, because a gRPC stack in the ordinary one
+would be in every install; it is not in `[all]` for that reason.
 
 ```python
 from dataclasses import dataclass
@@ -28,9 +33,11 @@ db = (
 ```
 
 The schema can be a `dataclasses.dataclass`, a Pydantic model, a Pydantic
-dataclass or a `BaseSettings` class. Everything else — sources,
-precedence, watching, recovery, diagnostics — is the same object either
-way; what changes is what validation means and what you install.
+dataclass or a `BaseSettings` class — or `Values`, which is no schema at
+all: a configuration read by dotted path, for the keys a program learns
+at run time rather than declares. Everything else — sources, precedence,
+watching, recovery, diagnostics — is the same object whichever it is;
+what changes is what validation means and what you install.
 
 The engine is the [`dynamic-config`] Rust crate: files, environment
 layering, `.env`, profiles, discovery, precedence, a debounced file
@@ -98,19 +105,54 @@ re-declares which fields are secret** — the binding derives the list from
 the model's own types, nested models included, and the redacted cache and
 the scrubbed validation errors follow from the same list.
 
+### Testing, with the cleanup written down
+
+```python
+with config.overrides(pool_size=1, host="localhost"):
+    ...        # reloaded on entry; the previous overrides are back on exit
+```
+
+The exit restores the override layer the block *found* rather than
+emptying it, so a nested `with` composes and a pin set before the block
+survives it — and it restores on an exception too, so a failing assertion
+does not decide what the next test sees. Dotted paths are spelled with
+`__`, as in the environment layer: `pool__max_size=1`.
+
+The filesystem and environment half ships as a pytest plugin, found
+through a `pytest11` entry point — installing the package is the whole
+setup:
+
+```python
+def test_the_service_reads_its_file(dynamic_config_workspace):
+    (dynamic_config_workspace / "app.toml").write_text('[db]\nport = 5432\n')
+    config = DynamicConfig(Database, key="db").file("app.toml")
+
+    assert config.init_and_current().port == 5432
+```
+
+`dynamic_config_env("APP_")` is the other fixture: it unsets the
+variables a developer's shell would otherwise contribute. Neither is
+autouse, and `dynamic_config.pytest` imports pytest and the standard
+library and nothing else — it is loaded in every pytest run of every
+environment this package is installed in.
+
 ### The decorator, for the settings crowd
 
 ```python
-from dynamic_config import dynamic_config
+from dynamic_config import Configured, dynamic_config
 
 @dynamic_config(key="db", files=["config.toml"], env="APP_")
-class Database(BaseModel):
+class Database(Configured, BaseModel):
     host: str
     port: int = 5432
 
 Database.config.init()
-Database.current()
+Database.current().host      # typed as `str`, and it completes in an editor
 ```
+
+`Configured` is what makes the attached members visible to a type checker
+and to an editor — attributes attached at runtime are invisible to both.
+The decorator works without it; the completion does not.
 
 It does not load at import time — reading files while a module is being
 imported is a surprise nobody asked for. `init=True` says otherwise.
@@ -132,11 +174,10 @@ imported is a surprise nobody asked for. `init=True` says otherwise.
 
 ## Not exposed, deliberately
 
-- **The remote stores** (etcd, Consul, Vault, NATS, Redis, S3,
+- **The remote store crates** (etcd, Consul, Vault, NATS, Redis, S3,
   Firestore). Their clients would ride into every wheel; they stay in
-  Rust until there is a reason to pay that.
-- **`RemoteSource` implemented in Python** — a Python object on the fetch
-  path deserves its own design pass.
+  Rust until there is a reason to pay that. The *door* they go through
+  is here — see [A store of your own](#a-store-of-your-own).
 - **Encrypted files.** Decryption needs a `Decryptor` implementation,
   which is a Rust trait; a deployment that needs it decrypts with the CLI
   and points this at the result.
@@ -147,6 +188,42 @@ imported is a surprise nobody asked for. `init=True` says otherwise.
   Support goes the other way instead:
   [`DynamicConfig.from_settings`](#pydantic-settings) turns a settings
   class's own declaration into engine sources.
+
+## A store of your own
+
+A remote store is an object with `fetch()` and `describe()`, so a
+company's own service — or anything nobody will write a Rust client for
+— needs no Rust:
+
+```python
+from dynamic_config import DynamicConfig, Format, RemoteSource
+
+class ConfigService(RemoteSource):
+    def fetch(self):
+        return httpx.get(URL, timeout=5).text, Format.JSON
+
+    def describe(self):
+        return "the config service"
+
+config = DynamicConfig(Database, key="db").remote(ConfigService())
+config.refresh_remote()      # reads the store, keeps the document
+config.init()                # merges it — above the files, below the environment
+```
+
+Fetching is explicit, exactly as it is in Rust: a load merges what was
+last fetched and touches no network. A `fetch()` that raises arrives as
+`RemoteError` — or `AuthError`, if that is what it raised — with the
+original attached as `__cause__` and its message deliberately not
+repeated, because a store's exception routinely carries the URL it
+called. Nothing is poisoned: the previous document and the previous model
+both keep serving.
+
+The GIL is not held across the fetch — a `fetch()` doing I/O releases it
+the way any Python thread does, measured at 68–102% of a second thread's
+free-running rate — and a `fetch()` may read the configuration it is
+fetching for. [Remote Stores in
+Python](https://ctolon.github.io/dynamic-config/python/remote-stores.html)
+is the whole story.
 
 ## pydantic-settings
 
@@ -183,12 +260,13 @@ validation rather than shrugging.
 
 ## Examples
 
-Sixteen runnable scripts in [`examples/`](examples) — the quick start,
+Eighteen runnable scripts in [`examples/`](examples) — the quick start,
 layering and precedence, watching, asyncio (single- and multi-file), the
 decorator (plain, and several configurations on one event loop),
 multi-tenant configuration, secrets and recovery, the diagnostics tour,
-test overrides, every callback shape, pydantic-settings, and FastAPI,
-Flask and Django integrations. All of them run in CI.
+test overrides, every callback shape, pydantic-settings, a remote store
+written in Python, and FastAPI, Flask and Django integrations. All of
+them run in CI.
 
 ```sh
 python examples/01_quick_start.py
@@ -206,6 +284,16 @@ read at 28 ns, the GIL and thread rules, and interpreter-shutdown safety.
 
 Python 3.9+ (abi3 wheels), Pydantic 2. The distribution is
 `dynamic-config-py`; the import is `dynamic_config`.
+
+**Free-threaded CPython 3.14t is supported on Linux.** A `Py_GIL_DISABLED`
+build has no stable ABI, so it gets a `cp314t` manylinux wheel of its own
+rather than riding the abi3 one, and the module declares
+`Py_mod_gil = Py_MOD_GIL_NOT_USED` so the interpreter does not turn the GIL
+back on for the process at import. 3.14t and not 3.13t: PyO3 dropped 3.13t
+when CPython promoted free-threading from experimental to supported. The
+audit behind the declaration — and what a green suite still does not prove
+— is
+[Free-Threaded CPython](https://ctolon.github.io/dynamic-config/python/free-threading.html).
 
 ## License
 

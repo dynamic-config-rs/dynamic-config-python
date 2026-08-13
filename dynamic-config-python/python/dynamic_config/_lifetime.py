@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import threading
 import weakref
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Callable
@@ -34,7 +35,7 @@ class Watch:
         calling into a torn-down Python is the classic embedding crash.
         """
         self._inner = inner
-        _LIVE_WATCHES.add(self)
+        _register(_LIVE_WATCHES, self)
 
     @property
     def running(self) -> bool:
@@ -143,6 +144,33 @@ class HookGuard:
 _LIVE_CONFIGS: weakref.WeakSet[DynamicConfig[Any]] = weakref.WeakSet()
 _LIVE_WATCHES: weakref.WeakSet[Watch] = weakref.WeakSet()
 
+#: Guards both sets above.
+#:
+#: `WeakSet` is only as thread-safe as the GIL makes it: its `add` is
+#: several bytecodes over an internal `set` plus a pending-removals list,
+#: and on a free-threaded interpreter two threads registering
+#: configurations at the same time have nothing serialising them. Under
+#: the GIL this lock costs a few hundred nanoseconds once per object;
+#: without one, a `WeakSet` mutated while the `atexit` sweep iterates it
+#: is exactly the crash this whole subsystem exists to prevent.
+#:
+#: Held only around the mutation and around the *snapshot* the sweep
+#: takes — never while a watcher is stopped, which would put a lock on
+#: the path a weakref callback can run on.
+_REGISTRY = threading.Lock()
+
+
+def _register(registry: weakref.WeakSet[Any], live: Any) -> None:
+    """Adds ``live`` to ``registry`` under the lock."""
+    with _REGISTRY:
+        registry.add(live)
+
+
+def _snapshot(registry: weakref.WeakSet[Any]) -> list[Any]:
+    """Everything currently in ``registry``, as a plain list."""
+    with _REGISTRY:
+        return list(registry)
+
 
 # ── Interpreter shutdown ───────────────────────────────────────────────
 
@@ -156,12 +184,12 @@ def _release_everything() -> None:
     threads here, while the interpreter is still whole, is what makes that
     impossible rather than unlikely.
     """
-    for watch in list(_LIVE_WATCHES):
+    for watch in _snapshot(_LIVE_WATCHES):
         # Teardown is best effort: an object already torn down by an
         # earlier handler must not stop the ones after it.
         with contextlib.suppress(Exception):
             watch.stop()
 
-    for config in list(_LIVE_CONFIGS):
+    for config in _snapshot(_LIVE_CONFIGS):
         with contextlib.suppress(Exception):
             config._core.release()

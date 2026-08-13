@@ -127,11 +127,46 @@ class Report:
     resolved: tuple[Resolved, ...]
     unknown: tuple[UnknownKey, ...]
     failure: str | None
+    #: Whether the unknown-key comparison ran at all. `False` for a
+    #: configuration with no field list — a `Values` one — where an empty
+    #: :attr:`unknown` would otherwise read as an all-clear it never
+    #: earned.
+    unknown_checked: bool = True
 
     @property
     def is_clean(self) -> bool:
         """Nothing unknown, nothing failing."""
         return not self.unknown and self.failure is None
+
+    def __str__(self) -> str:
+        """The table the Rust crate prints, rendered here.
+
+        Paths and origins, never values: a report is pasted into an issue
+        tracker, and the file already holds the value.
+        """
+        lines = [f"[{self.key}]"]
+
+        if not self.resolved:
+            lines.append("  (nothing supplies this section)")
+
+        lines.extend(f"  {item.path:<28} {item.origin}" for item in self.resolved)
+
+        if self.unknown:
+            lines.append("")
+            lines.extend(f"  {item}" for item in self.unknown)
+
+        if not self.unknown_checked:
+            lines.append("")
+            lines.append("  unknown keys: not checked (no field list)")
+
+        lines.append("")
+        lines.append(
+            "  would not load: " + self.failure
+            if self.failure is not None
+            else "  would load"
+        )
+
+        return "\n".join(lines)
 
     def __repr__(self) -> str:
         """Counts rather than contents: a report lands in logs."""

@@ -645,12 +645,19 @@ def test_from_settings_honours_case_sensitivity(
 
 
 def test_from_settings_refuses_what_it_cannot_translate(workspace: Path) -> None:
-    class WithSecretsDir(BaseSettings):
-        model_config = SettingsConfigDict(secrets_dir="/run/secrets")
+    """`secrets_dir` used to be here; the engine grew the source it needed.
+
+    What is left are the two that have no engine equivalent and are not
+    going to grow one: a command line belongs to the program, and a
+    customised source order is one this cannot see, let alone reproduce.
+    """
+
+    class WithCli(BaseSettings):
+        model_config = SettingsConfigDict(cli_parse_args=True)
         host: str = "h"
 
-    with pytest.raises(ValueError, match="secrets_dir"):
-        DynamicConfig.from_settings(WithSecretsDir, key="s")
+    with pytest.raises(ValueError, match="cli_parse_args"):
+        DynamicConfig.from_settings(WithCli, key="s")
 
     class Customised(BaseSettings):
         host: str = "h"
@@ -753,3 +760,54 @@ def test_a_snapshot_keeps_a_large_integer_whole(workspace: Path) -> None:
     assert config.current().identifier == 18446744073709551615
     assert exported == config.current().identifier
     assert isinstance(exported, int), "a float here has already dropped digits"
+
+
+def test_from_settings_translates_a_secrets_directory(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one translation `from_settings` used to refuse.
+
+    Docker and Kubernetes mount secrets as a directory of single-value
+    files; pydantic-settings reads it as `secrets_dir`, and the engine
+    had no such source until it grew one.
+    """
+
+    class Mounted(BaseSettings):
+        model_config = SettingsConfigDict(secrets_dir="secrets")
+        host: str = "default"
+        password: str = ""
+
+    Path("secrets").mkdir()
+    Path("secrets/password").write_text("hunter2\n")
+    Path("config.toml").write_text('[s]\nhost = "from-file"\n')
+
+    config = DynamicConfig.from_settings(Mounted, key="s").file("config.toml")
+    config.init()
+
+    assert config.current().password == "hunter2", "one trailing newline trimmed"
+    assert config.current().host == "from-file"
+    assert "secrets/password" in str(config.source_of("password")), (
+        "provenance names the individual file, which is what makes this "
+        "better than a store that says only `secrets_dir`"
+    )
+
+
+def test_a_mounted_secret_is_redacted_like_any_other(workspace: Path) -> None:
+    """The derivation is by path, so this should be free — pinned anyway."""
+
+    class Mounted(BaseModel):
+        password: SecretStr = SecretStr("")
+
+    Path("secrets").mkdir()
+    Path("secrets/password").write_text("hunter2\n")
+
+    config = (
+        DynamicConfig(Mounted, key="s")
+        .secrets_dir("secrets")
+        .cache("cache.json", "redacted")
+    )
+    config.init()
+
+    assert config.current().password.get_secret_value() == "hunter2"
+    assert "hunter2" not in str(config.explain("password"))
+    assert "hunter2" not in Path("cache.json").read_text()

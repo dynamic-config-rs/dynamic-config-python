@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import warnings
 import weakref
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor
+from contextlib import contextmanager
 from typing import (
     Any,
     Callable,
@@ -35,8 +36,9 @@ from ._diagnostics import (
 )
 from ._errors import NotInitialisedError
 from ._executor import default_executor
-from ._lifetime import _LIVE_CONFIGS, HookGuard, Watch
-from ._schema import schema_for
+from ._lifetime import _LIVE_CONFIGS, HookGuard, Watch, _register
+from ._remote import RemoteSource
+from ._schema import is_values_type, schema_for
 from ._settings import (
     _SETTINGS_SOURCING,
     _as_paths,
@@ -44,6 +46,7 @@ from ._settings import (
     _is_settings,
     _leaf_paths,
 )
+from ._telemetry import ConfigStatus, RemoteStatus
 
 M = TypeVar("M")
 
@@ -69,7 +72,15 @@ class DynamicConfig(Generic[M]):
     lifecycle after that mirrors the Rust crate one for one.
     """
 
-    __slots__ = ("__weakref__", "_cached", "_core", "_executor", "_model", "_schema")
+    __slots__ = (
+        "__weakref__",
+        "_cached",
+        "_core",
+        "_executor",
+        "_model",
+        "_overrides",
+        "_schema",
+    )
 
     def __init__(
         self,
@@ -77,23 +88,40 @@ class DynamicConfig(Generic[M]):
         key: str,
         *,
         executor: Executor | None = None,
+        secrets: Sequence[str] = (),
     ) -> None:
         """Builds a configuration for ``model`` under the section ``key``.
 
-        Nothing is read here: sources are chosen with the fluent methods
-        and take effect at the first load. ``executor`` chooses which
-        thread pool pays for the blocking half of the ``_async`` calls;
-        ``None`` follows :func:`set_executor`.
+        Parameters:
+            model: the class this configuration resolves to — a Pydantic
+                model, a plain `dataclasses.dataclass`, or
+                :class:`~dynamic_config.Values` for a configuration with
+                no schema at all. Anything else is a `TypeError` here,
+                where the mistake is on screen.
+            key: the section key. Every file's top-level keys are
+                sections, so this is which one is yours; it also names
+                the environment prefix (``env("APP_")`` reads
+                ``APP_{KEY}_*``), the cache entry and every diagnostic.
+                Pass ``""`` for a configuration with nothing to call
+                itself, alongside :meth:`whole_document`.
+            executor: which thread pool pays for the blocking half of the
+                ``_async`` calls. ``None`` — the default — follows
+                :func:`~dynamic_config.set_executor`, which in turn
+                follows the running loop's own.
+            secrets: dotted paths whose values must never reach a
+                diagnostic, for a schemaless configuration. A declared
+                model already says which of its fields are secret —
+                `SecretStr`, or ``field(metadata={"secret": True})`` —
+                and these are **added** to that rather than replacing it.
 
-        The secret list and the field names are derived from the model
-        itself — nobody keeps a second list of which fields are sensitive
-        in step with the first.
+        Nothing is read here: sources are chosen with the fluent methods
+        and take effect at the first load.
         """
         # Whatever kind of schema this is — a Pydantic model, a plain
         # dataclass — the adapter answers the same three questions and
         # nothing below here knows the difference. A class this package
         # cannot read is refused right at the door.
-        schema = schema_for(model)
+        schema = schema_for(model, secrets)
 
         # A settings class that declares where to read from would get none
         # of it here: `model_validate` does not run pydantic-settings'
@@ -117,14 +145,28 @@ class DynamicConfig(Generic[M]):
 
         self._model = model
         self._cached: M | None = None
+        # A mirror of the engine's override layer, in the order it was
+        # set. The engine owns the layer and has no way to read it back,
+        # and `overrides()` has to *restore* what it found rather than
+        # empty it — otherwise a nested `with` would drop the outer
+        # block's pin on the way out of the inner one.
+        self._overrides: dict[str, Any] = {}
         # `None` means "whatever `set_executor` says", which in turn
         # means "the loop's own" unless somebody said otherwise.
         self._executor = executor
         self._schema = schema
+        # A declared model's own secret fields, plus whatever the caller
+        # named — and `None` when nobody could say. An empty list is the
+        # knowledge that there are no secrets; a schemaless configuration
+        # that named none has no such knowledge, and the engine goes on
+        # refusing a redacting cache until `secrets=` supplies it.
+        secret_paths = sorted({*schema.secret_paths(), *secrets})
+        known = secret_paths if secret_paths or not is_values_type(model) else None
+
         self._core = _core.Config(
             schema.validate,
             key,
-            schema.secret_paths(),
+            known,
             schema.field_names(),
         )
 
@@ -149,7 +191,7 @@ class DynamicConfig(Generic[M]):
         # sees the new value when it asks `current()`.
         self._core.on_reload(publish)
 
-        _LIVE_CONFIGS.add(self)
+        _register(_LIVE_CONFIGS, self)
 
     @classmethod
     def from_settings(
@@ -188,8 +230,11 @@ class DynamicConfig(Generic[M]):
         pydantic-settings where the two overlap: files lose to ``.env``,
         which loses to the environment, which loses to overrides.
 
+        ``secrets_dir`` translates too, since the engine grew the source
+        it needed: a directory of single-value files, at the same place
+        in the order pydantic-settings puts it.
+
         What cannot be translated is refused rather than dropped:
-        ``secrets_dir`` (the engine has no directory-of-values source),
         ``cli_parse_args`` (a command line is the program's, not a
         configuration's), and an overridden
         ``settings_customise_sources`` (an order this cannot see, let
@@ -208,7 +253,7 @@ class DynamicConfig(Generic[M]):
         config: Mapping[str, Any] = getattr(model, "model_config", {}) or {}
         refused = [
             name
-            for name in ("secrets_dir", "cli_parse_args")
+            for name in ("cli_parse_args",)
             if config.get(name, _SETTINGS_SOURCING[name]) != _SETTINGS_SOURCING[name]
         ]
 
@@ -234,6 +279,9 @@ class DynamicConfig(Generic[M]):
 
         for path in _as_paths(config.get("env_file")):
             configuration.env_file(path)
+
+        for path in _as_paths(config.get("secrets_dir")):
+            configuration.secrets_dir(path)
 
         # Unconditionally, rather than only when a prefix was declared: an
         # unprefixed settings class still reads the environment — `HOST`,
@@ -264,22 +312,56 @@ class DynamicConfig(Generic[M]):
         return self._model
 
     def file(self, path: str) -> DynamicConfig[M]:
-        """Adds a configuration file. Merged in call order; later wins."""
+        """Adds a configuration file. Merged in call order; later wins.
+
+        Parameters:
+            path: the file to read. The format comes from the extension —
+                ``.json``, ``.toml``, ``.yaml``/``.yml`` — and a file
+                that is not there is skipped, which is what makes an
+                optional secrets file work.
+        """
         self._core.file(str(path))
         return self
 
     def discover(self, name: str, paths: Iterable[str]) -> DynamicConfig[M]:
-        """Looks for ``{name}.{ext}`` in each directory, below listed files."""
+        """Looks for ``{name}.{ext}`` in each directory.
+
+        Every directory that has a match contributes one layer, so the
+        search order *is* the layering order — and all of them sit below
+        anything :meth:`file` listed, because a listed file is a
+        deliberate statement and a search result is a guess about the
+        machine.
+
+        Parameters:
+            name: the stem to look for. ``config`` finds ``config.toml``,
+                ``config.json`` or ``config.yaml``.
+            paths: the directories to look in, in order.
+        """
         self._core.discover(name, [str(path) for path in paths])
         return self
 
     def env(self, prefix: str) -> DynamicConfig[M]:
-        """The environment layer: ``prefix`` plus the section key."""
+        """The environment layer, read above every file.
+
+        Parameters:
+            prefix: the variable prefix, trailing underscore included.
+                It combines with the section key, so ``env("APP_")`` on a
+                ``db`` configuration reads ``APP_DB_*``; with ``key=""``
+                it is the prefix alone.
+        """
         self._core.env(prefix)
         return self
 
     def nest(self, separator: str) -> DynamicConfig[M]:
-        """The nesting separator inside variable names; ``__`` unless said."""
+        """The separator that means nesting inside a variable name.
+
+        Parameters:
+            separator: what introduces one level. ``__`` unless given, so
+                ``APP_DB_POOL__MAX_SIZE`` is ``pool.max_size``. A single
+                separator cannot mean both "word break" and "nesting", so
+                whatever this is must be something a field name will not
+                contain. Meaningful only alongside :meth:`env`.
+        """
         self._core.nest(separator)
         return self
 
@@ -293,24 +375,173 @@ class DynamicConfig(Generic[M]):
         self._core.strict_env()
         return self
 
+    def whole_document(self) -> DynamicConfig[M]:
+        """Reads each document as this model's values, with no section header.
+
+        The default is one file, several sections: every top-level key
+        names one, and this configuration's key says which is yours —
+        which is what lets a ``config.toml`` carry ``[db]`` and
+        ``[server]`` for two models that know nothing about each other.
+
+        Say this when the document is *only* this configuration::
+
+            {"host": "0.0.0.0", "port": 8000}
+
+            Server.config.whole_document().file("server.json").init()
+
+        The key keeps its other jobs — ``APP_SERVER_PORT`` still reaches
+        ``port``, the cache entry and the diagnostics are still named
+        after it — and ``key=""`` is allowed for a configuration with
+        nothing to call itself, whose environment layer is then just the
+        prefix (``APP_PORT``). It applies to every document this
+        configuration reads: files, discovered files, profile variants and
+        a remote store's document alike.
+        """
+        self._core.whole_document()
+        return self
+
     def env_file(self, path: str) -> DynamicConfig[M]:
         """A ``.env`` file read as the environment layer, below the real one."""
         self._core.env_file(str(path))
         return self
 
+    def secrets_dir(self, path: str) -> DynamicConfig[M]:
+        """A directory where each file is one key.
+
+        How Docker and Kubernetes hand a container its credentials: the
+        filename is the key, the contents are the value. One directory
+        level, nesting spelled in the filename with the same separator
+        :meth:`nest` sets, and one trailing newline trimmed — every tool
+        that writes a secret to a file writes one and nobody means it as
+        part of the password.
+
+        Sits above the files and below ``.env`` and the environment: a
+        mounted secret is a fact about *this* deployment, so it beats a
+        document a store hands to every deployment alike, and loses to a
+        variable exported for this one run.
+
+        Values arrive as strings, deliberately — a credentials directory
+        is the worst place to guess that ``12345`` was meant as a number.
+        """
+        self._core.secrets_dir(str(path))
+        return self
+
     def profile_env(self, variable: str) -> DynamicConfig[M]:
-        """The environment variable naming the active profile."""
+        """The environment variable naming the active profile.
+
+        Parameters:
+            variable: the variable to read, e.g. ``APP_ENV``. Set to
+                ``production``, every file gains a sibling layer —
+                ``config.toml`` then ``config.production.toml`` — and a
+                variant that does not exist is skipped. A profile has to
+                be a plain word: one with a path separator in it is
+                refused rather than followed.
+        """
         self._core.profile_env(variable)
         return self
 
     def cache(self, path: str, mode: str = "redacted") -> DynamicConfig[M]:
         """A last-known-good cache, written after every clean load.
 
-        ``mode`` is ``redacted`` (the default — secrets stay out),
-        ``full`` or ``fingerprint``.
+        Read when the sources will not load, so a restart during an
+        outage starts from what worked rather than not at all.
+
+        Parameters:
+            path: where to write it. The format comes from the extension.
+            mode: ``"redacted"`` — every secret path dropped, the usual
+                choice — or ``"full"``, which writes the secrets too and
+                is a file to protect accordingly, or ``"fingerprint"``,
+                which stores no values at all and only reports whether
+                the configuration changed. Anything else is a
+                `ValueError` naming the three.
+
+        A redacting mode has to know which paths are secret. A declared
+        model says so; a :class:`~dynamic_config.Values` configuration
+        says so with ``DynamicConfig(..., secrets=[...])``, and without
+        it the cache is refused rather than written unredacted.
         """
         self._core.cache(str(path), mode)
         return self
+
+    # ── The remote store ───────────────────────────────────────────────
+
+    def remote(self, source: RemoteSource) -> DynamicConfig[M]:
+        """Reads this configuration's remote store from a Python object.
+
+        ``source`` is a :class:`RemoteSource` — an object with ``fetch()``
+        and ``describe()`` — so a store nobody will write a Rust client
+        for is a class::
+
+            class OurService(RemoteSource):
+                def fetch(self):
+                    return httpx.get(URL, timeout=5).text, Format.JSON
+
+                def describe(self):
+                    return "our service"
+
+            config = DynamicConfig(Database, key="db").remote(OurService())
+
+        Nothing is fetched here — call :meth:`refresh_remote` for that,
+        which is the same explicit split the Rust crate makes: a load
+        merges the document that was last fetched and touches no network.
+        The remote layer sits above the files and below the environment.
+
+        Unlike the source methods, this one is **not** refused after the
+        first load: a store can be installed or swapped whenever, exactly
+        as the Rust ``set_remote`` can. Swapping one drops whatever the
+        previous store had fetched, so a new source never answers with the
+        old one's values.
+
+        ``describe()`` is asked once, here, because the engine reads it on
+        the load path and a load must not re-enter Python.
+        """
+        self._core.remote(source)
+        return self
+
+    def refresh_remote(self) -> None:
+        """Reads the store, and keeps what came back for the next load.
+
+        Raises :class:`RemoteError` if the fetch failed — or
+        :class:`AuthError` if what ``fetch()`` raised was one — with the
+        exception the source raised attached as ``__cause__``. Its
+        *message* is deliberately not repeated in this one: a store's
+        exception routinely carries the URL it called.
+
+        A failed refresh changes nothing: the document from the last
+        successful fetch is still there, the installed model still serves,
+        and a later refresh works. Nothing is poisoned by a store having a
+        bad afternoon.
+
+        Takes effect on the next :meth:`init` or :meth:`reload`.
+        """
+        self._core.refresh_remote()
+
+    async def refresh_remote_async(self) -> None:
+        """:meth:`refresh_remote`, without blocking the event loop.
+
+        The fetch runs on a worker thread, so a ``fetch()`` written with a
+        blocking client — which is most of them — does not stall the loop.
+        Note what this does *not* do: it does not make ``fetch()`` itself
+        awaitable. A source that wants an async client should run its own
+        loop inside ``fetch()``, or fetch on a thread of its own and hand
+        this one what it has.
+        """
+        await asyncio.get_running_loop().run_in_executor(
+            self._pool, self._core.refresh_remote
+        )
+
+    def clear_remote(self) -> None:
+        """Drops the fetched document, so the next load has no remote layer.
+
+        The source stays installed; this drops what was fetched, not where
+        to fetch it from.
+        """
+        self._core.clear_remote()
+
+    @property
+    def remote_description(self) -> str | None:
+        """What the installed store's ``describe()`` said, or ``None``."""
+        return self._core.remote_description
 
     # ── Loading and installing ─────────────────────────────────────────
 
@@ -427,9 +658,15 @@ class DynamicConfig(Generic[M]):
     ) -> Watch:
         """Reloads on file changes until the returned handle is stopped.
 
-        ``poll_interval`` chooses polling over the platform's notification
-        backend — what network and overlay filesystems need, where
-        notifications register successfully and then never fire.
+        Parameters:
+            debounce: seconds to wait after a change before reloading. An
+                editor's atomic save is several filesystem events, and
+                this is what makes them one reload.
+            poll_interval: seconds between polls, which chooses polling
+                over the platform's notification backend — what network
+                and overlay filesystems need, where notifications
+                register successfully and then never fire. ``None`` uses
+                the platform's own event API.
 
         Starting a watcher is short, but it is not free — see
         :meth:`watch_async` for what it costs and when that matters.
@@ -551,6 +788,10 @@ class DynamicConfig(Generic[M]):
 
         For threads. On an event loop, await :meth:`changed_async` or
         iterate :meth:`changes`.
+
+        Parameters:
+            timeout: seconds to wait at most, or ``None`` to wait
+                forever. Answers `None` when it elapses first.
         """
         result = self._core.wait_for_change(self._core.generation, timeout)
 
@@ -628,19 +869,53 @@ class DynamicConfig(Generic[M]):
     # ── Runtime layers ─────────────────────────────────────────────────
 
     def set_default(self, path: str, value: Any) -> None:
-        """A fallback the program computes and a file need not state."""
+        """A fallback the program computes and a file need not state.
+
+        The bottom layer: consulted only when nothing else supplies the
+        key. Takes effect on the next load.
+
+        Parameters:
+            path: the dotted path to set, e.g. ``pool.max_size``.
+            value: any JSON-shaped value — `str`, `int`, `float`, `bool`,
+                `None`, `list` or `dict` of those.
+        """
         self._core.set_default(path, value)
 
     def set_defaults(self, values: Mapping[str, Any] | Any) -> None:
-        """Every field of a mapping (or model) as defaults, at once."""
+        """Every field of a mapping (or model) as defaults, at once.
+
+        How a hand-written ``Config.default()`` becomes the bottom layer
+        without naming each key.
+
+        Parameters:
+            values: a mapping, or a model instance to read the fields of.
+        """
         self._core.set_defaults(values)
 
     def set_override(self, path: str, value: Any) -> None:
-        """A value that outranks every source — what makes a test authoritative."""
+        """A value that outranks every source, the environment included.
+
+        What makes a test authoritative, and what a ``--set key=value``
+        flag reaches. Takes effect on the next load.
+
+        Parameters:
+            path: the dotted path to pin.
+            value: as :meth:`set_default`.
+        """
         self._core.set_override(path, value)
+        self._overrides[path] = value
 
     def set_assignments(self, assignments: Sequence[str]) -> None:
-        """``key=value`` strings, as a ``--set`` flag would supply them."""
+        """``key=value`` strings, as a ``--set`` flag would supply them.
+
+        Above the environment and below the overrides: a flag is more
+        specific than a variable, and less specific than a value the
+        program was told to pin.
+
+        Parameters:
+            assignments: the strings to parse. One with no ``=`` in it is
+                an error naming it.
+        """
         self._core.set_assignments(list(assignments))
 
     def clear_defaults(self) -> None:
@@ -650,31 +925,115 @@ class DynamicConfig(Generic[M]):
     def clear_overrides(self) -> None:
         """Empties the override layer — what a test does when it is done."""
         self._core.clear_overrides()
+        self._overrides.clear()
 
     def clear_assignments(self) -> None:
         """Empties the flags layer."""
         self._core.clear_assignments()
 
+    @contextmanager
+    def overrides(self, **values: Any) -> Iterator[None]:
+        """Pins values for a block, and puts the previous ones back after it.
+
+        The shape a test wants, because the four-line version has a
+        cleanup step that is easy to forget — and a forgotten
+        `clear_overrides()` leaks into the next test through whatever
+        configuration the module built::
+
+            with config.overrides(pool_size=1, host="localhost"):
+                assert config.current().pool_size == 1
+
+        Reloaded on entry, so the values are live inside the block;
+        reloaded again on the way out, so they are gone after it. The
+        exit restores the override layer as it was *found* rather than
+        emptying it, which is what lets a nested `with` compose: an inner
+        block that pins one more field leaves the outer block's pins
+        standing when it ends.
+
+        A dotted path is spelled with `__`, the same nesting rule the
+        environment layer uses — `pool__max_size=1` means
+        `pool.max_size`. A field whose own name contains `__` cannot be
+        written that way; use `set_override` for it.
+
+        The restore runs on an exception too, which is the point: a
+        failing assertion inside the block must not decide what the next
+        test sees. With no arguments the block pins nothing and still
+        restores, so a test that calls `set_override` itself can wrap
+        that in one.
+        """
+        previous = dict(self._overrides)
+
+        for name, value in values.items():
+            self.set_override(name.replace("__", "."), value)
+
+        try:
+            self.reload()
+            yield
+        finally:
+            self.clear_overrides()
+
+            for path, value in previous.items():
+                self.set_override(path, value)
+
+            self.reload()
+
     def alias(self, old: str, new: str) -> None:
-        """Keeps files written before a rename working."""
+        """Keeps files written before a rename working.
+
+        Fills a gap rather than overriding: the new path wins wherever it
+        is set, and the old one answers only where it is not.
+
+        Parameters:
+            old: the path deployments still spell.
+            new: the path it means now.
+        """
         self._core.alias(old, new)
 
     def bind_env(self, path: str, variable: str) -> None:
-        """Maps one field to one variable by name — ``PORT``, ``DATABASE_URL``."""
+        """Maps one field to one variable by name.
+
+        For the variable a platform chose and a prefix cannot reach —
+        ``PORT``, ``DATABASE_URL``. Sits just above the prefixed
+        environment layer, because naming a variable is the more specific
+        statement.
+
+        Parameters:
+            path: the dotted path to fill.
+            variable: the environment variable to read it from.
+        """
         self._core.bind_env(path, variable)
 
     # ── Diagnostics ────────────────────────────────────────────────────
 
     def source_of(self, path: str) -> Origin | None:
-        """Where the value at ``path`` would come from on the next load."""
+        """Where the value at ``path`` would come from on the next load.
+
+        Re-reads the sources rather than reporting the installed
+        snapshot, so it answers before the first load and after a failed
+        one.
+
+        Parameters:
+            path: the dotted path to trace.
+        """
         return Origin._of(self._core.source_of(path))
 
     def is_set(self, path: str) -> bool:
-        """Whether anything supplies ``path``."""
+        """Whether anything supplies ``path``.
+
+        Parameters:
+            path: the dotted path to look for.
+        """
         return bool(self._core.is_set(path))
 
     def explain(self, path: str) -> Explanation:
-        """Every layer's answer for ``path``, not just the winner's."""
+        """Every layer's answer for ``path``, not just the winner's.
+
+        The one diagnostic that carries values, and the one that redacts:
+        a path this configuration knows to be secret renders as ``***``.
+
+        Parameters:
+            path: the dotted path to explain.
+        """
         raw = self._core.explain(path)
 
         return Explanation(
@@ -713,11 +1072,55 @@ class DynamicConfig(Generic[M]):
                 for item in raw["unknown"]
             ),
             failure=raw["failure"],
+            unknown_checked=raw["unknown_checked"],
         )
 
     def snapshot(self) -> Snapshot:
         """The resolved section, without deserializing it into the model."""
         return Snapshot(self._core.snapshot())
+
+    # ── Telemetry ──────────────────────────────────────────────────────
+
+    def status(self) -> ConfigStatus:
+        """What is true of this configuration right now.
+
+        Which generation is live, how long ago it landed, why, and how
+        the reloads since have gone — a handful of atomic loads and no
+        I/O, so a ``/metrics`` handler may call it per scrape::
+
+            status = config.status()
+            if not status.is_healthy:
+                log.warning("%d reloads have installed nothing",
+                            status.consecutive_failures)
+
+        The *when* fields are elapsed seconds rather than timestamps, and
+        deliberately: the engine records them with a monotonic clock so
+        that NTP stepping a wall clock backwards cannot make a fresh
+        configuration look stale, and a monotonic instant has no epoch to
+        convert from. :mod:`dynamic_config._telemetry` — the class
+        docstrings on :class:`ConfigStatus` and :class:`Failure` — says
+        what to do if a wall-clock time is what you actually need.
+
+        Like the other diagnostics, asking fixes the sources: the numbers
+        live in the engine, and this is what builds one.
+        """
+        return ConfigStatus._of(self._core.status())
+
+    def remote_status(self) -> RemoteStatus:
+        """How the fetches from this configuration's store have gone.
+
+        The other half of the question :meth:`status` answers: *did the
+        store answer*, against *did the document install*. A service
+        watching only the second cannot tell a store that went away from
+        a configuration nobody has changed.
+
+        Always answers, even where no source was ever installed — that
+        case reads as ``fetches == 0`` and ``reachable is None``, which
+        is a source nobody has asked anything of rather than one that is
+        down. Unlike :meth:`status` this touches no engine, so asking
+        does not fix the sources.
+        """
+        return RemoteStatus._of(self._core.remote_status())
 
     def __repr__(self) -> str:
         """Model, key and generation — never the configuration itself."""

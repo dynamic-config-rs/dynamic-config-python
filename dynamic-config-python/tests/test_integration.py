@@ -13,14 +13,23 @@ their apps, so an example that rots fails here too.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, Field, SecretStr
 
-from dynamic_config import DynamicConfig, InvalidError, NotInitialisedError
+from dynamic_config import (
+    DynamicConfig,
+    Format,
+    InvalidError,
+    NotInitialisedError,
+    Origin,
+    RemoteSource,
+)
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
@@ -246,6 +255,114 @@ def test_readers_never_see_a_half_installed_configuration(workspace: Path) -> No
     assert all(count > 0 for count in reads), reads
     assert config.current().port == 59
     assert config.generation == 59, "one install per reload, no more and no fewer"
+
+
+def test_a_service_polls_a_python_store_while_it_watches_and_serves(
+    workspace: Path,
+) -> None:
+    """The arc a remote store is actually reached through.
+
+    Not `refresh_remote()` on its own: a poller thread reading a Python
+    store and reloading, a file watcher running at the same time, and
+    four readers throughout — which is where a lock held across a fetch,
+    or a store that lost its document to a concurrent file reload, would
+    show up. `name` and `port` are written together and always agree, so
+    a reader that sees them disagree has caught an install mid-flight.
+    """
+    write(1)
+
+    class Store(RemoteSource):
+        """The store an operator turns, one pool size at a time."""
+
+        def __init__(self) -> None:
+            self.pool_size = 10
+            self.fetches = 0
+
+        def fetch(self) -> tuple[str, Format]:
+            self.fetches += 1
+            # A real one blocks here; sleeping is what makes the readers
+            # below overlap the fetch rather than tidily follow it.
+            time.sleep(0.005)
+            return json.dumps({"svc": {"pool_size": self.pool_size}}), Format.JSON
+
+        def describe(self) -> str:
+            return "the pool-size service"
+
+    def write_atomically(port: int) -> None:
+        """`write`, but the watcher can never see a truncated file.
+
+        `Path.write_text` truncates and then writes, and an empty file is
+        *valid* TOML — so a watcher that fires in that window installs a
+        model of pure defaults, which reads as torn here and has nothing
+        to do with the remote store. A rename is one step to a poller.
+        """
+        write(port, path="config.toml.tmp")
+        Path("config.toml.tmp").replace("config.toml")
+
+    store = Store()
+    config = DynamicConfig(Service, key="svc").file("config.toml").remote(store)
+    config.refresh_remote()
+    config.init()
+
+    assert config.current().pool_size == 10
+
+    stop = threading.Event()
+    torn: list[tuple[str, int]] = []
+    reads = [0, 0, 0, 0]
+
+    def read(index: int) -> None:
+        while not stop.is_set():
+            model = config.current()
+
+            if model.name != f"service-{model.port}":
+                torn.append((model.name, model.port))
+
+            reads[index] += 1
+
+    readers = [threading.Thread(target=read, args=(index,)) for index in range(4)]
+    for reader in readers:
+        reader.start()
+
+    def poll() -> None:
+        for size in range(11, 31):
+            store.pool_size = size
+            config.refresh_remote()
+            config.reload()
+
+    poller = threading.Thread(target=poll)
+
+    try:
+        with config.watch(debounce=0.01, poll_interval=0.01):
+            poller.start()
+
+            for port in range(2, 40):
+                write_atomically(port)
+                config.reload()
+
+            poller.join(timeout=60)
+    finally:
+        stop.set()
+
+        for reader in readers:
+            reader.join(timeout=10)
+
+    assert not poller.is_alive()
+    assert not torn, f"a reader saw a half-installed model: {torn[:3]}"
+    assert all(count > 0 for count in reads), reads
+    # One at startup and one per poll, and not one for any of the ~58
+    # loads the watcher and the writer drove in between: a load merges the
+    # document last fetched and touches no network.
+    assert store.fetches == 21, "a load must not fetch; only the poller does"
+
+    # The store's last word survives everything the file watcher did, and
+    # the two caches still agree.
+    config.reload()
+
+    assert config.current().pool_size == 30
+    assert config.current() is config._core.current()
+    assert config.source_of("pool_size") == Origin(
+        kind="remote", detail="the pool-size service"
+    )
 
 
 async def test_many_services_share_a_loop_without_interfering(

@@ -129,6 +129,79 @@ def test_a_hook_holding_the_configuration_does_not_wedge_the_exit(
     assert "survived True" in result.stdout
 
 
+def test_exiting_while_a_python_source_is_mid_fetch_is_clean(
+    workspace: Path,
+) -> None:
+    # A Python `fetch()` is Python running on a background thread, which is
+    # the same crash class the watcher sweep exists for: the shim that
+    # calls it lives in a leaked `static` and would otherwise still be
+    # reachable after finalization. The `atexit` release drops the object,
+    # so a fetch that lands late finds nothing to call rather than a torn
+    # down interpreter.
+    result = run(
+        """
+        import threading, time
+        from dynamic_config import RemoteSource, Format
+
+        started = threading.Event()
+
+        class Slow(RemoteSource):
+            def fetch(self):
+                started.set()
+                time.sleep(30)          # still running when the process exits
+                return '{"db": {"host": "h", "port": 9}}', Format.JSON
+
+            def describe(self):
+                return "a store that never answers"
+
+        config.remote(Slow())
+        threading.Thread(target=config.refresh_remote, daemon=True).start()
+
+        assert started.wait(timeout=10)
+        print("exiting mid-fetch")
+        """,
+        workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "exiting mid-fetch" in result.stdout
+    assert "Fatal Python error" not in result.stderr
+
+
+def test_exiting_with_a_source_that_holds_the_configuration_is_clean(
+    workspace: Path,
+) -> None:
+    result = run(
+        """
+        from dynamic_config import RemoteSource, Format
+
+        class Circular(RemoteSource):
+            def __init__(self, config):
+                self.config = config     # the cycle every real source closes
+
+            def fetch(self):
+                port = (self.config.try_current().port or 0) + 1
+                return '{"db": {"host": "h", "port": %d}}' % port, Format.JSON
+
+            def describe(self):
+                return "a circular store"
+
+        config.remote(Circular(config))
+
+        for _ in range(5):
+            config.refresh_remote()
+            config.reload()
+
+        print("survived", config.current().port)
+        """,
+        workspace,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "survived" in result.stdout
+    assert "Fatal" not in result.stderr
+
+
 def test_dropping_the_configuration_stops_its_watcher(workspace: Path) -> None:
     result = run(
         """
