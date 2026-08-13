@@ -30,7 +30,7 @@ is the door into this one.
 
 ## [Unreleased]
 
-## 0.1.0 — 2026-08-14
+## 0.1.1 — 2026-08-14
 
 ### Added
 

@@ -33,7 +33,7 @@ classifiers = [
 # remote path at all. It is not `==` for the reason the Rust crates are: a
 # wheel that pinned its sibling exactly would make every base-wheel patch a
 # forced upgrade of this one.
-dependencies = ["dynamic-config-py>=0.1.0"]
+dependencies = ["dynamic-config-py>=0.1.1"]
 dynamic = ["version"]
 
 [project.urls]
