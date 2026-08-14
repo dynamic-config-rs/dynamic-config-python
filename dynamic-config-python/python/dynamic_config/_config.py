@@ -66,7 +66,7 @@ def _touches(wanted: frozenset[str], moved: Sequence[Change]) -> bool:
 
 
 class DynamicConfig(Generic[M]):
-    """One configuration: a Pydantic model, and where its values live.
+    """One configuration: a declared class, and where its values live.
 
     Sources are chosen fluently and take effect at the first load; the
     lifecycle after that mirrors the Rust crate one for one.
@@ -94,10 +94,10 @@ class DynamicConfig(Generic[M]):
 
         Parameters:
             model: the class this configuration resolves to — a Pydantic
-                model, a plain `dataclasses.dataclass`, or
-                :class:`~dynamic_config.Values` for a configuration with
-                no schema at all. Anything else is a `TypeError` here,
-                where the mistake is on screen.
+                model, a plain `dataclasses.dataclass`, a
+                `msgspec.Struct`, or :class:`~dynamic_config.Values` for
+                a configuration with no schema at all. Anything else is a
+                `TypeError` here, where the mistake is on screen.
             key: the section key. Every file's top-level keys are
                 sections, so this is which one is yours; it also names
                 the environment prefix (``env("APP_")`` reads
@@ -111,16 +111,17 @@ class DynamicConfig(Generic[M]):
             secrets: dotted paths whose values must never reach a
                 diagnostic, for a schemaless configuration. A declared
                 model already says which of its fields are secret —
-                `SecretStr`, or ``field(metadata={"secret": True})`` —
-                and these are **added** to that rather than replacing it.
+                `SecretStr`, ``field(metadata={"secret": True})``, or
+                ``msgspec.Meta(extra={"secret": True})`` — and these are
+                **added** to that rather than replacing it.
 
         Nothing is read here: sources are chosen with the fluent methods
         and take effect at the first load.
         """
         # Whatever kind of schema this is — a Pydantic model, a plain
-        # dataclass — the adapter answers the same three questions and
-        # nothing below here knows the difference. A class this package
-        # cannot read is refused right at the door.
+        # dataclass, a msgspec Struct — the adapter answers the same
+        # three questions and nothing below here knows the difference. A
+        # class this package cannot read is refused right at the door.
         schema = schema_for(model, secrets)
 
         # A settings class that declares where to read from would get none
@@ -643,7 +644,12 @@ class DynamicConfig(Generic[M]):
         return self._cached
 
     def replace(self, model: M) -> None:
-        """Installs a model built by the caller, firing the hooks."""
+        """Installs a model built by the caller, firing the hooks.
+
+        The engine is not told: `status()` and `snapshot().generation` go
+        on describing the last real *load*, because this install never
+        went through one. `current()` is the model handed over.
+        """
         if not self._schema.is_instance(model):
             raise TypeError(
                 f"expected a {self._model.__name__}, not {type(model).__name__}"

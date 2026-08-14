@@ -118,6 +118,19 @@ class UnknownKey:
     path: str
     suggestion: str | None
 
+    def __str__(self) -> str:
+        """The sentence the Rust crate prints, word for word.
+
+        Without this the report rendered a dataclass `repr` —
+        ``UnknownKey(path='stray', suggestion=None)`` — in the middle of a
+        table of prose, which is the one line of a `check()` a person
+        actually has to act on.
+        """
+        if self.suggestion is None:
+            return f"{self.path}: unknown key"
+
+        return f"{self.path}: unknown key, did you mean `{self.suggestion}`?"
+
 
 @dataclass(frozen=True)
 class Report:

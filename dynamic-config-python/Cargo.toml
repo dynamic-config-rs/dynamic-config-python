@@ -13,12 +13,12 @@ name = "dynamic-config-python"
 # So this moves when *this* changes — a new Python API, a behaviour
 # change, or an engine bump worth shipping — and `maturin upload
 # --skip-existing` makes a release that changed nothing here a no-op.
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 # Its own floor, not the workspace's 1.71: PyO3 needs more than the core does.
 rust-version = "1.85"
 license.workspace = true
-description = "Python bindings for dynamic-config: Rust resolves, Pydantic validates"
+description = "Python bindings for dynamic-config: Rust resolves, your schema validates"
 repository.workspace = true
 readme = "README.md"
 # Never on crates.io: a `cdylib` extension module has no Rust consumers. It

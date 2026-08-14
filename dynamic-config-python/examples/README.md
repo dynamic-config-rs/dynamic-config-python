@@ -31,11 +31,12 @@ python examples/01_quick_start.py
 | [`19_document_shape`](19_document_shape.py) | A file with no section header (`whole_document()`), a key the model does not declare — ignored, forbidden, or refused by a dataclass — two files holding half a model each, and a field nothing supplies |
 | [`20_schemaless`](20_schemaless.py) | `Values`: a configuration with no model class, read by dotted path — the same layers and diagnostics, `check()` saying it compared no field names, and `secrets=` buying the redacting cache |
 | [`21_decorator_whole_document`](21_decorator_whole_document.py) | `@dynamic_config` argument by argument, and `whole_document=True` against a file with no header — including `key=""` for a configuration with nothing to call itself |
+| [`22_msgspec`](22_msgspec.py) | A `msgspec.Struct` as the schema: secrets declared in `Meta(extra=...)`, unknown keys left to the struct, an empty `errors` on a refusal, and the value msgspec quotes taken back out (`pip install dynamic-config-py[msgspec]`) |
 
-Examples 10 to 12 need their framework installed and 15 needs
-pydantic-settings; 17 needs nothing at all, which is its point — it is
-the base install. The rest need Pydantic (`pip install
-dynamic-config-py[pydantic]`). All twenty-one run in CI, because an
+Examples 10 to 12 need their framework installed, 15 needs
+pydantic-settings and 22 needs msgspec; 17 needs nothing at all, which is
+its point — it is the base install. The rest need Pydantic (`pip install
+dynamic-config-py[pydantic]`). All twenty-two run in CI, because an
 example nobody runs is documentation that has already started rotting —
 and the three framework ones are driven again by
 `tests/test_integration.py`, which asserts what they answer rather than

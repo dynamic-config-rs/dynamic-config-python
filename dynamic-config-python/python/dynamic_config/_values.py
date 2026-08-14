@@ -120,6 +120,41 @@ class Values(Mapping[str, Any]):
 
         return default if found is _MISSING else found
 
+    def sub(self, path: str) -> Values:
+        """The subtree at ``path``, as a `Values` of its own.
+
+        What a subsystem gets handed instead of the whole configuration:
+        below it, `sub("db")`'s paths are relative — ``pool.max_size``
+        rather than ``db.pool.max_size`` — so a function that takes a
+        `Values` does not have to know where in the document it lives.
+        The Rust crate's :rust:`Snapshot::sub` is the same idea, and this
+        is what a schemaless configuration was missing.
+
+        ```python
+        config = DynamicConfig(Values, key="app").file("config.toml")
+        config.init()
+
+        pool = config.current().sub("db.pool")
+
+        pool["max_size"]        # not "db.pool.max_size"
+        ```
+
+        Parameters:
+            path: a dotted path, as :meth:`__getitem__` takes.
+
+        Returns:
+            A `Values` over that subtree — **empty** when the path holds
+            nothing, and empty when it holds a value rather than a table.
+
+        The two empties are deliberate and are not an error: a subsystem
+        handed a section its deployment did not configure should read its
+        own defaults, not crash on the way to them. Ask
+        :meth:`__contains__` first when the difference matters.
+        """
+        found = self._walk(path)
+
+        return Values(found if isinstance(found, Mapping) else {})
+
     # ── Reading it as data ─────────────────────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:

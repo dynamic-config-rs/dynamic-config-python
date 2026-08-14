@@ -26,6 +26,72 @@ breaking.
 
 ## [Unreleased]
 
+## 0.1.2 — 2026-08-14
+
+### Added
+
+- **`Values.sub(path)`**: the subtree at a path, as a `Values` of its own.
+  What a subsystem gets handed instead of the whole configuration —
+  relative paths below it, so a function that takes a `Values` does not
+  have to know where in the document it lives. `Snapshot::sub` is the Rust
+  equivalent, and this was the one shape that had no way to say it: a
+  caller indexed twice at every read, or built a dict and lost the
+  dotted-path lookup that is `Values`' whole point.
+
+  A path that holds nothing — or holds a value rather than a table —
+  answers an *empty* `Values` rather than raising. A subsystem handed a
+  section its deployment did not configure should reach its own defaults
+  rather than crash on the way to them, and `in` tells the two apart.
+
+### Fixed
+
+- **An unknown key reads as a sentence in `check()`'s report.** It rendered
+  the dataclass `repr` — `UnknownKey(path='stray', suggestion=None)` — in the
+  middle of a table of prose, and it is the one line of a report a person has
+  to act on. It now says `stray: unknown key`, and `did you mean …?` when
+  there is a suggestion, which is what the Rust crate has always printed.
+
+### Added
+
+- **`msgspec.Struct` is a schema.** The fifth kind of declaration, and
+  the fastest at what a reload asks of one: `pip install
+  dynamic-config-py[msgspec]`, then pass the struct where a model would
+  go. Everything around it is unchanged — the same sources, watcher,
+  cache and diagnostics — and the three answers that are msgspec's own
+  are documented rather than left to be discovered: a secret is declared
+  with `Meta(extra={"secret": True})`, unknown keys are the struct's
+  business (`forbid_unknown_fields`), and `InvalidError.errors` is empty
+  because msgspec raises a message rather than a report. A secret under a
+  *container* — `list[Credentials]` — redacts the containing field whole,
+  because a dotted path cannot index a list, and the direction to be wrong
+  in is the one that keeps passwords out of a cache. Decoding is lax,
+  because an environment variable is a string. `examples/22_msgspec.py`.
+- `changed_paths` and `set_default` accept a `msgspec.Struct` instance,
+  under the names a file writes rather than the Python ones — a struct
+  declaring `rename="camel"` diffs as `maxSize`, which is the key every
+  other path in this library already uses.
+
+### Changed
+
+- **`InvalidError.errors` is present on every refusal**, and `[]` when
+  the schema raised a message rather than a report. It used to be absent
+  for a dataclass schema, so `error.errors` was an `AttributeError` that
+  depended on which schema library the configuration happened to use —
+  while the shipped stub declared it unconditionally.
+
+### Fixed
+
+- A msgspec `ValidationError` no longer carries the value it refused into
+  a diagnostic. Two of msgspec's messages quote the data — an enum member
+  and a tagged union's tag — and this boundary takes it back out, keeping
+  the path, which is field names rather than data.
+
+### Changed
+
+- One classifier per interpreter the CI matrix actually runs (3.9 through
+  3.14), plus CPython and the Python-modules topic: PyPI's filter reads
+  those rather than `requires-python`.
+
 ## 0.1.1 — 2026-08-14
 
 ### Added
@@ -80,7 +146,7 @@ breaking.
   lazily, owned by the remote module and started when the first store that
   needs one is constructed; the base wheel still refuses the engine's
   `tokio` feature. See the book's
-  [Remote Stores in Rust](../book/src/python/remote-wheel.md).
+  [Remote Stores in Rust](../book-python/src/remote-wheel.md).
 
   `dynamic_config/remote.py` re-exports exactly what `dynamic_config_remote`
   exports, and that is now asserted as a **set equality in both suites**.
@@ -503,4 +569,3 @@ is now pinned by a test.
   stopped at interpreter shutdown rather than left to call into a
   finalized Python.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.4.0...HEAD

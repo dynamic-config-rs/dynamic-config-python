@@ -19,8 +19,20 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    # One row per interpreter this wheel is *tested* against, because that is
+    # what PyPI's filter answers and what `requires-python` cannot say on its
+    # own: the abi3 wheel would install on anything from 3.9 upwards, and the
+    # CI matrix is what makes the claim true.
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 # The base wheel, and nothing else. Not an optional dependency and not a
@@ -33,14 +45,16 @@ classifiers = [
 # remote path at all. It is not `==` for the reason the Rust crates are: a
 # wheel that pinned its sibling exactly would make every base-wheel patch a
 # forced upgrade of this one.
-dependencies = ["dynamic-config-py>=0.1.1"]
+dependencies = ["dynamic-config-py>=0.1.2"]
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/ctolon/dynamic-config"
-Repository = "https://github.com/ctolon/dynamic-config"
+# The Python book, for the reason the base wheel's points there.
+Homepage = "https://ctolon.github.io/dynamic-config/python/"
 Documentation = "https://ctolon.github.io/dynamic-config/python/remote-wheel.html"
+Repository = "https://github.com/ctolon/dynamic-config"
 Changelog = "https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python-remote/CHANGELOG.md"
+Issues = "https://github.com/ctolon/dynamic-config/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "pytest-asyncio>=0.23"]

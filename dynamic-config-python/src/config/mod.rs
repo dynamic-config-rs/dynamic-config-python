@@ -18,13 +18,33 @@
 //! the last-known-good cache is not written, and the previous snapshot
 //! keeps serving. The validated model is staged there and published by
 //! whichever path finished the install.
+//!
+//! ## The files
+//!
+//! `Config` is the surface a Python program touches and it is here, with
+//! the rest split by concern: `inner` is the state the surface owns and
+//! the validate/commit protocol it runs; `scrub` is how a Python failure
+//! becomes a message with no values in it; `handles` is `Watch` and
+//! `Snapshot`, the two smaller classes; and `convert` next door is
+//! unchanged. Nothing Python can name moved.
+
+mod handles;
+mod inner;
+mod scrub;
+
+pub(crate) use handles::{Snapshot, Watch};
+
+use handles::changes_as_pairs;
+
+use inner::{Engine, Inner, Layers, Shared, Wake};
+use scrub::{describe, scrub_validation, scrubbed_reports};
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
-use dynamic_config::watch::{WatchHandle, WatchMode};
-use dynamic_config::{Aliases, Builder, CacheMode, Dynamic, EnvBindings, Error, Layer, Remote};
+use dynamic_config::watch::WatchMode;
+use dynamic_config::{Builder, CacheMode, Error};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3::{PyTraverseError, PyVisit};
@@ -34,483 +54,16 @@ use crate::convert;
 use crate::errors;
 use crate::remote::{PyRemoteSource, PySource};
 
-/// What the validation closure needs — and nothing that points back at
-/// the configuration, so the closure the watcher thread holds can never
-/// keep the Python object alive.
-struct Shared {
-    /// Whatever turns a resolved dict into an instance: Pydantic's
-    /// `model_validate`, a builder for a plain dataclass, anything a
-    /// caller hands over. Calling a *method by name* here would have made
-    /// Pydantic the only schema this binding could ever have.
-    validate: Py<PyAny>,
-    /// The tree that was validated, the model it produced, and the
-    /// sequence number of that validation.
-    ///
-    /// The sequence is what makes committing idempotent: an install is
-    /// followed by *two* commit attempts — the engine's own reload hook
-    /// (which does not fire for the very first install) and the explicit
-    /// one on the `init`/`reload` path — and publishing twice would fire
-    /// every hook twice and bump the generation twice for one reload.
-    staged: Mutex<Option<Staged>>,
-    /// Handed out by the validate hook.
-    next_sequence: AtomicU64,
-    /// Pydantic's own report for the most recent refusal, scrubbed of the
-    /// offending values — attached to the exception the caller sees, so a
-    /// Python program can branch on `error.errors` the way it would on a
-    /// `ValidationError`.
-    reports: Mutex<Option<Py<PyList>>>,
-}
-
-/// The runtime layers, which the core takes as `&'static`.
-///
-/// Leaked once per configuration, deliberately: the core's runtime layers
-/// are shaped for the `static`s a `#[dynamic_config]` type generates, and
-/// an instance is the same long-lived thing wearing a different hat. It is
-/// a few hundred bytes per configuration object, never per reload — the
-/// same trade the core's memoized watch names make. Building thousands of
-/// configurations in a loop is the one shape that should not.
-#[derive(Clone, Copy)]
-struct Layers {
-    defaults: &'static Layer,
-    overrides: &'static Layer,
-    flags: &'static Layer,
-    bindings: &'static EnvBindings,
-    aliases: &'static Aliases,
-    /// The remote slot. Kept here rather than only handed to the builder,
-    /// because `refresh_remote()` reaches it directly — a refresh is a
-    /// fetch into this slot and nothing else, exactly as the generated
-    /// Rust `refresh_remote()` is.
-    remote: &'static Remote,
-}
-
-impl Layers {
-    fn leak() -> Self {
-        Self {
-            defaults: Box::leak(Box::new(Layer::new())),
-            overrides: Box::leak(Box::new(Layer::new())),
-            flags: Box::leak(Box::new(Layer::new())),
-            bindings: Box::leak(Box::new(EnvBindings::new())),
-            aliases: Box::leak(Box::new(Aliases::new())),
-            remote: Box::leak(Box::new(Remote::new())),
-        }
-    }
-}
-
-/// A configuration is a builder until something loads through it.
-///
-/// The ready form is an `Arc` so that a caller can *clone it out* and let
-/// the lock go before doing anything slow. Holding this lock across a load
-/// would be a deadlock waiting for a second thread: the loader needs the
-/// GIL to validate, and a thread blocked on a Rust mutex is a thread
-/// holding the GIL while it waits.
-enum Engine {
-    /// Boxed: a builder carries every source it was told about, and the
-    /// enum is only ever this large while one is being configured.
-    Building(Box<Builder<Value>>),
-    Ready(Arc<Dynamic<Value>>),
-    /// Held for the instant a transition takes; never observed.
-    Moving,
-}
-
-/// The generation of the *validated model*, which is what Python waits on.
-///
-/// Deliberately not the engine's own generation: a reload that resolves
-/// but fails validation moves the engine and must not wake a reader.
-struct Wake {
-    generation: Mutex<u64>,
-    changed: Condvar,
-}
-
-/// One validated tree, waiting to be published.
-struct Staged {
-    sequence: u64,
-    tree: Value,
-    model: Py<PyAny>,
-}
-
-struct Inner {
-    key: String,
-    /// The sequence of the most recently published model; a commit for
-    /// anything at or below it has already happened.
-    last_committed: AtomicU64,
-    shared: Arc<Shared>,
-    engine: Mutex<Engine>,
-    /// The published model. The read path, and the only lock `current()`
-    /// takes.
-    cache: RwLock<Option<Py<PyAny>>>,
-    wake: Wake,
-    hooks: Mutex<Vec<(u64, Py<PyAny>)>>,
-    next_hook: AtomicU64,
-    layers: Layers,
-    /// The Python object a remote fetch calls, if one was installed.
-    ///
-    /// Held here rather than inside the shim the engine owns: that shim
-    /// lives in a leaked `&'static Remote`, so anything Python it held
-    /// would never be freed. See `remote::PySource`.
-    source: Arc<PySource>,
-}
-
-impl Inner {
-    /// Converts and validates `tree`, returning the model instance.
-    ///
-    /// The GIL is taken here and nowhere else on the load path.
-    fn validate(shared: &Shared, tree: &Value) -> Result<(), Error> {
-        Python::attach(|py| {
-            let data = convert::to_py(py, tree)
-                .map_err(|failure| Error::invalid(describe(py, &failure)))?;
-
-            match shared.validate.bind(py).call1((data,)) {
-                Ok(instance) => {
-                    let sequence = shared.next_sequence.fetch_add(1, Ordering::SeqCst) + 1;
-
-                    *shared
-                        .staged
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Staged {
-                        sequence,
-                        tree: tree.clone(),
-                        model: instance.unbind(),
-                    });
-
-                    Ok(())
-                }
-                Err(failure) => {
-                    *shared
-                        .reports
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        scrubbed_reports(py, &failure).map(pyo3::Bound::unbind);
-
-                    Err(Error::invalid(scrub_validation(py, &failure)))
-                }
-            }
-        })
-    }
-
-    /// Publishes the model that belongs to `tree` — once per install.
-    ///
-    /// Both commit paths call this: the engine's reload hook, and the
-    /// explicit one after `init`/`reload` returns. Whichever arrives
-    /// first publishes; the other finds the sequence already committed
-    /// and does nothing, which is what keeps one reload to one generation
-    /// and one round of hooks.
-    fn commit(&self, py: Python<'_>, tree: &Value) -> PyResult<()> {
-        let (sequence, model) = {
-            let staged = self
-                .shared
-                .staged
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-            match staged.as_ref() {
-                Some(pending) if pending.tree == *tree => {
-                    // Claimed, not checked-then-claimed: the two commit
-                    // paths for one install both reach here, and a read
-                    // followed by a later store lets both of them win —
-                    // one reload, two generations, every hook twice. The
-                    // GIL happens to serialise this today; the invariant
-                    // should not depend on that, and free-threaded
-                    // CPython is on the roadmap.
-                    if self
-                        .last_committed
-                        .fetch_max(pending.sequence, Ordering::SeqCst)
-                        >= pending.sequence
-                    {
-                        // Already published by the other path.
-                        return Ok(());
-                    }
-
-                    (pending.sequence, pending.model.clone_ref(py))
-                }
-                // A concurrent load staged something else in the window
-                // between this install's validation and its commit. Rare,
-                // and publishing the wrong model would be worse than
-                // validating once more.
-                _ => {
-                    drop(staged);
-                    Self::validate(&self.shared, tree)
-                        .map_err(|error| errors::to_py_err(py, &error))?;
-
-                    match self
-                        .shared
-                        .staged
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .as_ref()
-                    {
-                        Some(pending) => (pending.sequence, pending.model.clone_ref(py)),
-                        None => return Ok(()),
-                    }
-                }
-            }
-        };
-
-        // A no-op for the claimed arm above (`fetch_max` already stored
-        // it); the re-validation arm arrives here without having claimed.
-        self.last_committed.fetch_max(sequence, Ordering::SeqCst);
-
-        let previous = self
-            .cache
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(model.clone_ref(py));
-
-        {
-            let mut generation = self
-                .wake
-                .generation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *generation += 1;
-            self.wake.changed.notify_all();
-        }
-
-        self.run_hooks(py, previous.as_ref(), &model);
-
-        Ok(())
-    }
-
-    /// Every registered hook, each isolated from the others.
-    ///
-    /// A raising hook is reported through Python's unraisable channel and
-    /// the rest still run — the crate's panic-isolation contract, in the
-    /// vocabulary Python already uses for callbacks that cannot propagate.
-    fn run_hooks(&self, py: Python<'_>, previous: Option<&Py<PyAny>>, current: &Py<PyAny>) {
-        let hooks: Vec<Py<PyAny>> = self
-            .hooks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .map(|(_, hook)| hook.clone_ref(py))
-            .collect();
-
-        let old = match previous {
-            Some(model) => model.clone_ref(py),
-            None => py.None(),
-        };
-
-        for hook in hooks {
-            if let Err(failure) = hook.bind(py).call1((old.bind(py), current.bind(py))) {
-                failure.write_unraisable(py, Some(hook.bind(py)));
-            }
-        }
-    }
-
-    /// The engine, built on first use — with the lock released before the
-    /// caller does anything with it.
-    ///
-    /// Every slow path (a load, a reload, a watch start) runs *outside*
-    /// this lock, and that is not tidiness: the loader takes the GIL to
-    /// validate, so a thread that blocked on this mutex while holding the
-    /// GIL would stop the lock's owner from ever finishing.
-    fn dynamic(&self, py: Python<'_>, this: &Arc<Inner>) -> PyResult<Arc<Dynamic<Value>>> {
-        let mut engine = self
-            .engine
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        if matches!(*engine, Engine::Building(_)) {
-            let Engine::Building(builder) = std::mem::replace(&mut *engine, Engine::Moving) else {
-                unreachable!("just checked")
-            };
-
-            let dynamic = Dynamic::new(*builder);
-
-            // The watcher installs through the engine, so the commit for a
-            // watch-driven reload has to ride the engine's own hook. Weak,
-            // because the hook lives inside the `Dynamic` this `Inner`
-            // owns — an `Arc` here would be a cycle that never frees.
-            let weak: Weak<Inner> = Arc::downgrade(this);
-            dynamic.on_reload(move |_previous, current| {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-
-                Python::attach(|py| {
-                    if let Err(failure) = inner.commit(py, current) {
-                        failure.write_unraisable(py, None);
-                    }
-                });
-            });
-
-            *engine = Engine::Ready(Arc::new(dynamic));
-        }
-
-        let _ = py;
-
-        match &*engine {
-            Engine::Ready(dynamic) => Ok(Arc::clone(dynamic)),
-            _ => Err(errors::BackendError::new_err(
-                "this configuration is being reconfigured on another thread",
-            )),
-        }
-    }
-
-    /// Applies a fluent builder call, which is only meaningful before the
-    /// first load.
-    fn configure(
-        &self,
-        py: Python<'_>,
-        apply: impl FnOnce(Builder<Value>) -> Builder<Value>,
-    ) -> PyResult<()> {
-        let mut engine = self
-            .engine
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        match std::mem::replace(&mut *engine, Engine::Moving) {
-            Engine::Building(builder) => {
-                *engine = Engine::Building(Box::new(apply(*builder)));
-
-                Ok(())
-            }
-            other => {
-                let already_loaded = matches!(other, Engine::Ready(_));
-                *engine = other;
-                let _ = py;
-
-                Err(errors::BackendError::new_err(if already_loaded {
-                    "the sources cannot change after the first load; build a \
-                     second configuration instead"
-                } else {
-                    "this configuration is being reconfigured on another thread"
-                }))
-            }
-        }
-    }
-}
-
-/// A short, value-free rendering of a Python failure.
-fn describe(py: Python<'_>, failure: &PyErr) -> String {
-    let _ = py;
-
-    failure.to_string()
-}
-
-/// Pydantic's report, minus the offending values.
-///
-/// `ValidationError`'s own `str()` embeds `input_value=...`, which is the
-/// one place its defaults and this crate's rules disagree — and this
-/// crate's rule wins at the boundary. The location, the message and the
-/// error type are kept, because those are what a person fixes.
-fn scrub_validation(py: Python<'_>, failure: &PyErr) -> String {
-    let value = failure.value(py);
-
-    let Ok(reports) = value.call_method0(pyo3::intern!(py, "errors")) else {
-        // Not a `ValidationError` — something the model itself raised.
-        return failure.to_string();
-    };
-
-    let Ok(iterator) = reports.try_iter() else {
-        return "the configuration did not validate".to_owned();
-    };
-
-    let mut lines = Vec::new();
-
-    for report in iterator {
-        let Ok(report) = report else { continue };
-
-        let path = report
-            .get_item("loc")
-            .ok()
-            .and_then(|location| location.try_iter().ok())
-            .map(|parts| {
-                parts
-                    .filter_map(|part| part.ok())
-                    .map(|part| part.str().map(|text| text.to_string()).unwrap_or_default())
-                    .collect::<Vec<_>>()
-                    .join(".")
-            })
-            .filter(|path| !path.is_empty())
-            .unwrap_or_else(|| "(the configuration)".to_owned());
-
-        let kind = report
-            .get_item("type")
-            .ok()
-            .and_then(|kind| kind.extract::<String>().ok())
-            .unwrap_or_default();
-
-        let message = report
-            .get_item("msg")
-            .ok()
-            .and_then(|message| message.extract::<String>().ok())
-            .map(|message| scrub_message(&kind, message))
-            .unwrap_or_else(|| "did not validate".to_owned());
-
-        lines.push(if kind.is_empty() {
-            format!("{path}: {message}")
-        } else {
-            format!("{path}: {message} [{kind}]")
-        });
-    }
-
-    if lines.is_empty() {
-        return "the configuration did not validate".to_owned();
-    }
-
-    lines.join("; ")
-}
-
-/// One report's message, minus anything a validator wrote itself.
-///
-/// Pydantic's own messages are value-free by construction — "Input should
-/// be a valid integer" names the expectation, never the input. A message
-/// under `value_error` or `assertion_error` is different in kind: it is
-/// whatever the model author passed to `raise ValueError(...)`, and
-/// `raise ValueError(f"invalid token {value}")` is the ordinary way to
-/// write one. That text reaches `str(InvalidError)` and `.errors`, so it
-/// is replaced here rather than trusted; the path and the type are kept,
-/// which is what a person needs to find the field.
-fn scrub_message(kind: &str, message: String) -> String {
-    if matches!(kind, "value_error" | "assertion_error") {
-        return "rejected by a validator (its message is not repeated here, \
-                because a validator's own text can carry the value)"
-            .to_owned();
-    }
-
-    message
-}
-
-/// The scrubbed error reports, as Python data.
-fn scrubbed_reports<'py>(py: Python<'py>, failure: &PyErr) -> Option<Bound<'py, PyList>> {
-    let value = failure.value(py);
-    let reports = value.call_method0(pyo3::intern!(py, "errors")).ok()?;
-    let list = PyList::empty(py);
-
-    for report in reports.try_iter().ok()? {
-        let Ok(report) = report else { continue };
-        let entry = PyDict::new(py);
-
-        let kind = report
-            .get_item("type")
-            .ok()
-            .and_then(|value| value.extract::<String>().ok())
-            .unwrap_or_default();
-
-        // `msg` is rebuilt rather than copied, for the same reason the
-        // rendered message is: a custom validator writes it.
-        if let Ok(message) = report.get_item("msg") {
-            let scrubbed = message
-                .extract::<String>()
-                .map(|text| scrub_message(&kind, text))
-                .unwrap_or_else(|_| "did not validate".to_owned());
-            let _ = entry.set_item("msg", scrubbed);
-        }
-
-        for field in ["loc", "type", "url"] {
-            if let Ok(item) = report.get_item(field) {
-                // Everything except `input` and `ctx`, which carry the
-                // value that must not travel.
-                let _ = entry.set_item(field, item);
-            }
-        }
-
-        list.append(entry).ok()?;
-    }
-
-    Some(list)
-}
-
+///         nothing to call itself, which goes with `whole_document()`.
+///     secrets: the dotted paths whose values must never reach a
+///         diagnostic, or `None` for *not known*. `None` is not `[]`: an
+///         empty list is the knowledge that there are no secrets, and a
+///         redacting cache mode is refused without that knowledge rather
+///         than writing a cache that claims a redaction it never did.
+///     fields: the model's top-level field names, which `check()`
+///         compares a document against to call a key unknown. Empty
+///         means *no field list*, and `check()` reports that rather than
+///         an all-clear it did not earn.
 /// One configuration: sources, storage, lifecycle and diagnostics.
 ///
 /// The compiled half of `dynamic_config.DynamicConfig`, which is what a
@@ -527,16 +80,6 @@ fn scrubbed_reports<'py>(py: Python<'py>, failure: &PyErr) -> Option<Bound<'py, 
 ///     key: the section key. Selects this configuration's table out of
 ///         each document, and names the environment prefix, the cache
 ///         entry and every diagnostic. `""` is a configuration with
-///         nothing to call itself, which goes with `whole_document()`.
-///     secrets: the dotted paths whose values must never reach a
-///         diagnostic, or `None` for *not known*. `None` is not `[]`: an
-///         empty list is the knowledge that there are no secrets, and a
-///         redacting cache mode is refused without that knowledge rather
-///         than writing a cache that claims a redaction it never did.
-///     fields: the model's top-level field names, which `check()`
-///         compares a document against to call a key unknown. Empty
-///         means *no field list*, and `check()` reports that rather than
-///         an all-clear it did not earn.
 #[pyclass(module = "dynamic_config._core", name = "Config", frozen)]
 pub(crate) struct Config {
     inner: Arc<Inner>,
@@ -1661,154 +1204,36 @@ impl Config {
 
     /// A crate error as the exception that mirrors it — with Pydantic's
     /// own scrubbed report attached when validation is what refused.
+    ///
+    /// `errors` is set for *every* refusal, empty when the schema had no
+    /// report to give: a dataclass raises a message, and msgspec raises a
+    /// message, so only Pydantic fills it. The attribute existing either
+    /// way is what makes the stub's `errors: list[dict[str, Any]]` true —
+    /// a program that reads it after catching `InvalidError` should find
+    /// an empty list rather than an `AttributeError` that depends on
+    /// which schema library the configuration happened to use.
     fn raise(&self, py: Python<'_>, error: &Error) -> PyErr {
         let failure = errors::to_py_err(py, error);
 
         if error.kind() == dynamic_config::ErrorKind::Invalid {
-            if let Some(reports) = self
+            let reports = self
                 .inner
                 .shared
                 .reports
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-            {
-                let _ = failure.value(py).setattr("errors", reports);
-            }
+                .take();
+
+            let _ = match reports {
+                Some(reports) => failure.value(py).setattr("errors", reports),
+                None => failure
+                    .value(py)
+                    .setattr("errors", pyo3::types::PyList::empty(py)),
+            };
         }
 
         failure
     }
-}
-
-/// A running watcher. Dropping or stopping it ends the watch.
-#[pyclass(module = "dynamic_config._core", name = "Watch", frozen)]
-pub(crate) struct Watch {
-    handle: Mutex<Option<WatchHandle>>,
-}
-
-#[pymethods]
-impl Watch {
-    /// Stops watching. No parameters, and idempotent.
-    fn stop(&self) {
-        let _ = self
-            .handle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-    }
-
-    /// Watches for the rest of the process. No parameters.
-    ///
-    /// Whatever happens to this handle afterwards: the watcher outlives
-    /// it deliberately, which is the shape a program that watches until
-    /// it exits wants.
-    fn detach(&self) {
-        if let Some(handle) = self
-            .handle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
-            handle.detach();
-        }
-    }
-
-    #[getter]
-    /// Whether this watch is still running. No parameters.
-    fn running(&self) -> bool {
-        self.handle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<dynamic_config.Watch running={}>", self.running())
-    }
-}
-
-/// The resolved section, values and provenance, without a model.
-#[pyclass(module = "dynamic_config._core", name = "Snapshot", frozen)]
-pub(crate) struct Snapshot {
-    inner: dynamic_config::Snapshot,
-}
-
-#[pymethods]
-impl Snapshot {
-    /// The resolved values as plain Python data. No parameters.
-    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let value = self.inner.to_value();
-        let tree = value_to_json(&value);
-
-        Ok(convert::to_py(py, &tree)?.unbind())
-    }
-
-    /// Where a value came from, in this snapshot: `source_of(path)`.
-    ///
-    /// Parameters:
-    ///     path: the dotted path to trace.
-    fn source_of(&self, path: &str) -> Option<(String, Option<String>)> {
-        self.inner.source_of(path).map(|origin| {
-            let (kind, detail) = errors::origin_parts(origin);
-
-            (kind.to_owned(), detail)
-        })
-    }
-
-    /// Whether this snapshot holds a value at `path`: `contains(path)`.
-    ///
-    /// Parameters:
-    ///     path: the dotted path to look for.
-    fn contains(&self, path: &str) -> bool {
-        self.inner.contains(path)
-    }
-
-    /// Every dotted path that holds a value rather than a table. No
-    /// parameters.
-    fn leaf_paths(&self) -> Vec<String> {
-        self.inner.leaf_paths()
-    }
-
-    /// The first segment of every path, deduplicated. No parameters.
-    fn top_level_keys(&self) -> Vec<String> {
-        self.inner.top_level_keys()
-    }
-
-    /// Whether the section resolved to nothing at all. No parameters.
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    /// Which paths differ between two snapshots: `diff(other)`.
-    ///
-    /// Paths, never values. `(path, kind)`, where the kind is `added`,
-    /// `removed` or `changed`: structured rather than rendered, so the
-    /// caller branches on it instead of parsing English.
-    ///
-    /// Parameters:
-    ///     other: the snapshot to compare against. This one is the
-    ///         *previous* state and `other` the newer, so a key only
-    ///         `other` has reads as `added`.
-    fn diff(&self, other: &Snapshot) -> Vec<(String, String)> {
-        changes_as_pairs(self.inner.diff(&other.inner))
-    }
-
-    /// Shape, never values — the same line every diagnostic here holds.
-    fn __repr__(&self) -> String {
-        format!(
-            "<dynamic_config.Snapshot keys={}>",
-            self.inner.leaf_paths().len()
-        )
-    }
-}
-
-/// The crate's `Change` list, as pairs Python can branch on.
-fn changes_as_pairs(changes: Vec<dynamic_config::Change>) -> Vec<(String, String)> {
-    changes
-        .into_iter()
-        .map(|change| (change.path, change.kind.to_string()))
-        .collect()
 }
 
 /// Which paths differ between two configuration values:
@@ -1835,37 +1260,6 @@ pub(crate) fn changed_paths(
     dynamic_config::changed_paths(&previous, &current)
         .map(changes_as_pairs)
         .map_err(|error| errors::to_py_err(py, &error))
-}
-
-/// The crate's owned value mirror as the tree the converter walks.
-fn value_to_json(value: &dynamic_config::Value) -> Value {
-    use dynamic_config::Value as Owned;
-
-    match value {
-        Owned::Null => Value::Null,
-        Owned::Bool(boolean) => Value::Bool(*boolean),
-        // `u64` before the float: the crate's integer is an `i128`, and a
-        // perfectly ordinary `u64` identifier above `i64::MAX` used to
-        // fall straight through to `as f64` — so `snapshot().to_dict()`
-        // rounded a value the installed model kept exactly, and the two
-        // public views of one snapshot disagreed. The book promises the
-        // digits survive; this is where that promise is kept.
-        Owned::Integer(number) => i64::try_from(*number)
-            .map(Value::from)
-            .or_else(|_| u64::try_from(*number).map(Value::from))
-            .unwrap_or_else(|_| Value::from(*number as f64)),
-        Owned::Float(number) => serde_json::Number::from_f64(*number)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        Owned::String(text) => Value::String(text.clone()),
-        Owned::Array(items) => Value::Array(items.iter().map(value_to_json).collect()),
-        Owned::Table(entries) => Value::Object(
-            entries
-                .iter()
-                .map(|(key, item)| (key.clone(), value_to_json(item)))
-                .collect(),
-        ),
-    }
 }
 
 /// Seconds, the way Python spells a duration.

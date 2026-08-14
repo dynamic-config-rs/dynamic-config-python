@@ -398,6 +398,24 @@ def test_a_declared_secret_never_reaches_a_diagnostic(workspace: Path) -> None:
     assert "hunter2" not in repr(config.snapshot())
 
 
+def test_an_unknown_key_reads_as_a_sentence_in_the_report(workspace: Path) -> None:
+    """The one line of a `check()` a person has to act on, in prose.
+
+    It used to render the dataclass `repr` —
+    ``UnknownKey(path='stray', suggestion=None)`` — in the middle of a table
+    of paths and origins, because `Report.__str__` formats each entry with
+    `str()` and nothing had given this one a `__str__`.
+    """
+    write('[db]\nhost = "h"\nstray = 1\n')
+
+    report = DynamicConfig(Database, key="db").file("config.toml").check()
+    rendered = str(report)
+
+    assert not report.is_clean
+    assert "stray: unknown key" in rendered, rendered
+    assert "UnknownKey(" not in rendered, "a repr leaked into a report"
+
+
 def test_changed_paths_works_between_dataclass_instances(workspace: Path) -> None:
     from dynamic_config import changed_paths
 

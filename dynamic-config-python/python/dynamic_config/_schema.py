@@ -1,18 +1,20 @@
 """What a schema class says about itself, read once at construction.
 
 A *schema* here is whatever a caller declares their configuration with.
-Two of them ship: a Pydantic model, and a plain `dataclasses.dataclass`.
-Both answer the same three questions, and nothing else in this package
-knows which one it is holding:
+Four of them ship — a Pydantic model, a plain `dataclasses.dataclass`, a
+`msgspec.Struct`, and `Values` for no schema at all — and each answers
+the same questions, so that nothing else in this package knows which one
+it is holding:
 
     validate(mapping)  →  an instance, or an exception naming what is wrong
     field_names()      →  every key a configuration file may use
     secret_paths()     →  every path that must never reach a diagnostic
 
-Pydantic is an **optional** dependency. Nothing in this module imports it;
-the adapter that needs it lives in `_pydantic.py` and is imported only
-when a caller passes a Pydantic class, which is the one situation in
-which it is certainly installed. A dataclass user never pays for it.
+Pydantic and msgspec are **optional** dependencies. Nothing in this
+module imports either; each adapter lives in its own file and is
+imported only when a caller passes a class of that kind, which is the one
+situation in which the library is certainly installed. A dataclass user
+never pays for either.
 """
 
 from __future__ import annotations
@@ -106,6 +108,22 @@ def is_pydantic_dataclass(candidate: Any) -> bool:
     return isinstance(candidate, type) and hasattr(candidate, "__pydantic_validator__")
 
 
+def is_msgspec_struct(candidate: Any) -> bool:
+    """Whether ``candidate`` is a `msgspec.Struct` subclass.
+
+    By the name in its MRO, for the same reason the Pydantic check is:
+    this runs for every declaration, and a package that imported msgspec
+    to find out it was not one would be requiring it of everybody.
+    """
+    if not isinstance(candidate, type):
+        return False
+
+    return any(
+        base.__name__ == "Struct" and base.__module__.startswith("msgspec")
+        for base in type.mro(candidate)
+    )
+
+
 def is_dataclass_type(candidate: Any) -> bool:
     """Whether ``candidate`` is a dataclass *class* — not an instance of one."""
     return isinstance(candidate, type) and dataclasses.is_dataclass(candidate)
@@ -123,16 +141,18 @@ def schema_for(model: Any, secrets: Sequence[str] | None = None) -> Schema:
 
     Parameters:
         model: the class the configuration was declared with — a Pydantic
-            model, a plain dataclass, or `Values` for a configuration
-            with no schema at all.
+            model, a plain dataclass, a `msgspec.Struct`, or `Values` for
+            a configuration with no schema at all.
         secrets: dotted paths whose values must never reach a diagnostic.
             Only a schemaless configuration has any use for them: a
             declared model says which of its own fields are secret, and
             this is how the one that cannot declare says it.
 
-    `Values` first, because it is neither of the other two; then
-    Pydantic, because a Pydantic dataclass is also a dataclass and the
-    one that validates is the one to use.
+    `Values` first, because it is none of the others; then Pydantic,
+    because a Pydantic dataclass is also a dataclass and the one that
+    validates is the one to use; then msgspec, before the dataclass check
+    — a `Struct` is not a dataclass, but check order is where this kind
+    of bug lives, and being explicit costs one comment.
     """
     if is_values_type(model):
         from ._values import ValuesSchema
@@ -144,6 +164,11 @@ def schema_for(model: Any, secrets: Sequence[str] | None = None) -> Schema:
 
         return PydanticSchema(model)
 
+    if is_msgspec_struct(model):
+        from ._msgspec import MsgspecSchema
+
+        return MsgspecSchema(model)
+
     if is_dataclass_type(model):
         from ._dataclasses import DataclassSchema
 
@@ -151,7 +176,8 @@ def schema_for(model: Any, secrets: Sequence[str] | None = None) -> Schema:
 
     raise TypeError(
         "a configuration needs a schema class — a Pydantic model, a "
-        f"dataclass, or Values for one with no schema — not {model!r}"
+        "dataclass, a msgspec Struct, or Values for one with no schema "
+        f"— not {model!r}"
     )
 
 
@@ -163,7 +189,9 @@ def secret_paths(model: Any) -> list[str]:
     means `SecretStr`/`SecretBytes` fields, under every name a file could
     use for them; for a dataclass it means fields marked
     ``field(metadata={"secret": True})``, and the same wrappers if
-    Pydantic happens to be installed and used.
+    Pydantic happens to be installed and used; for a `msgspec.Struct` it
+    means ``Annotated[str, msgspec.Meta(extra={"secret": True})]``, which
+    is the same declaration in that library's own vocabulary.
 
     This is what seeds the redaction: the last-known-good cache drops
     those paths, `explain` renders them `***`, and a scrubbed validation

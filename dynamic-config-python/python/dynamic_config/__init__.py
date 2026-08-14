@@ -1,9 +1,9 @@
-"""Hot-reloadable configuration: Rust resolves, Pydantic validates.
+"""Hot-reloadable configuration: Rust resolves, your schema validates.
 
 The engine is the `dynamic-config` Rust crate — sources, layering,
 profiles, watching, last-known-good recovery and provenance. The schema
-is a Pydantic model you already know how to write. Validation runs once
-per successful resolve, never per read, so ``current()`` is an attribute
+is a class you already know how to write. Validation runs once per
+successful resolve, never per read, so ``current()`` is an attribute
 lookup on a cached instance.
 
     from dataclasses import dataclass
@@ -18,11 +18,11 @@ lookup on a cached instance.
     db = config.init_and_current()     # a Database, cached
 
 The schema can be a `dataclasses.dataclass` (no dependencies), a Pydantic
-model or a `pydantic_settings.BaseSettings` class — `pip install
-dynamic-config-py[pydantic]` and `[pydantic-settings]` buy those, `[all]`
-buys both. It can also be `Values`, which is no schema at all: a
-configuration read by dotted path, for keys a program learns at run time
-rather than declares.
+model, a `pydantic_settings.BaseSettings` class or a `msgspec.Struct` —
+`pip install dynamic-config-py[pydantic]`, `[pydantic-settings]` and
+`[msgspec]` buy those, and `[all]` is the Pydantic pair. It can also be
+`Values`, which is no schema at all: a configuration read by dotted path,
+for keys a program learns at run time rather than declares.
 
 This module is the public surface and nothing else. What it re-exports
 lives next door, one concern per file:
@@ -34,9 +34,10 @@ lives next door, one concern per file:
     _errors.py        the one exception this side adds
     _executor.py      which pool pays for the blocking half
     _lifetime.py      `Watch`, `HookGuard`, and the shutdown sweep
+    _msgspec.py       a msgspec Struct as a schema — imported only if used
     _pydantic.py      a Pydantic model as a schema — imported only if used
     _remote.py        `RemoteSource` and `Format`, for a store in Python
-    _schema.py        which adapter a class gets, and the questions both answer
+    _schema.py        which adapter a class gets, and the questions they all answer
     _settings.py      the pydantic-settings bridge
     _telemetry.py     `status()`, and the Prometheus exposition
     _values.py        `Values`, for a configuration with no schema class

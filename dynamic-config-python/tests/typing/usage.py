@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import msgspec
 from pydantic import BaseModel
 
 from dynamic_config import (
@@ -55,6 +56,18 @@ generation: int = config.generation
 
 cached = DynamicConfig(Cache, key="cache").file("config.toml")
 url: str = cached.init_and_current().url
+
+
+# ── A msgspec Struct, same surface ─────────────────────────────────────
+
+
+class Queue(msgspec.Struct):
+    url: str = "amqp://localhost"
+    prefetch: int = 16
+
+
+queued = DynamicConfig(Queue, key="queue").file("config.toml")
+prefetch: int = queued.init_and_current().prefetch
 
 
 # ── The decorator, with `Configured`: the typed form ───────────────────

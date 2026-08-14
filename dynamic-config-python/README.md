@@ -7,11 +7,14 @@ validates**.
 pip install dynamic-config-py                     # dataclasses; no dependencies
 pip install dynamic-config-py[pydantic]           # + Pydantic models
 pip install dynamic-config-py[pydantic-settings]  # + BaseSettings classes
-pip install dynamic-config-py[all]                # all of it
+pip install dynamic-config-py[msgspec]            # + msgspec Structs
+pip install dynamic-config-py[all]                # the Pydantic pair
 pip install dynamic-config-py[remote]             # + the Rust etcd and Vault clients
 ```
 
-`[all]` is the schema extras — a few hundred kilobytes of pure Python.
+`[all]` is the Pydantic extras — a few hundred kilobytes of pure Python.
+msgspec is a different validation engine rather than an addition to that
+one, so it is its own extra and not in `[all]`.
 `[remote]` is a **second wheel**, because a gRPC stack in the ordinary one
 would be in every install; it is not in `[all]` for that reason.
 
@@ -33,8 +36,8 @@ db = (
 ```
 
 The schema can be a `dataclasses.dataclass`, a Pydantic model, a Pydantic
-dataclass or a `BaseSettings` class — or `Values`, which is no schema at
-all: a configuration read by dotted path, for the keys a program learns
+dataclass, a `BaseSettings` class or a `msgspec.Struct` — or `Values`,
+which is no schema at all: a configuration read by dotted path, for the keys a program learns
 at run time rather than declares. Everything else — sources, precedence,
 watching, recovery, diagnostics — is the same object whichever it is;
 what changes is what validation means and what you install.
@@ -44,11 +47,26 @@ layering, `.env`, profiles, discovery, precedence, a debounced file
 watcher, last-known-good recovery and provenance. A dataclass schema is
 validated structurally — required fields, unknown keys, nested
 dataclasses, declared types. A Pydantic one is validated by Pydantic, all
-of it: `field_validator`, `model_validator`, aliases, `SecretStr`.
+of it: `field_validator`, `model_validator`, aliases, `SecretStr`. A
+msgspec one is validated in C, with its own `Meta` constraints and a
+secret declared as `Meta(extra={"secret": True})`.
 
 **Validation runs once per successful resolve, never per read.**
 `current()` returns a cached instance, so reading configuration on every
 request costs an attribute lookup rather than a boundary crossing.
+
+## Python versions
+
+| Line | Wheel | Tested |
+|---|---|---|
+| 3.9 – 3.14 | one abi3 wheel per platform | every commit, every line |
+| 3.14t (free-threaded) | its own `cp314t` wheel | every commit, concurrency suite ten times over |
+| 3.8 and older | — | not supported; `requires-python` refuses |
+
+Linux (manylinux 2_28) x86-64 and aarch64, macOS x86-64 and arm64, Windows
+x86-64. Raising the floor is treated as a breaking change and will not
+happen before 1.0. The full table, and what each row is tested with, is in
+[Stability & Production Use](https://ctolon.github.io/dynamic-config/python/stability.html).
 
 ## What it gives you
 
@@ -260,7 +278,8 @@ validation rather than shrugging.
 
 ## Examples
 
-Eighteen runnable scripts in [`examples/`](examples) — the quick start,
+Eighteen runnable scripts in
+[`examples/`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-python/examples) — the quick start,
 layering and precedence, watching, asyncio (single- and multi-file), the
 decorator (plain, and several configurations on one event loop),
 multi-tenant configuration, secrets and recovery, the diagnostics tour,

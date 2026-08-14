@@ -188,9 +188,35 @@ pub(crate) fn from_py(object: &Bound<'_, PyAny>) -> PyResult<Value> {
         return from_py(&dumped);
     }
 
+    // A `msgspec.Struct` has neither, and its own `structs.asdict` spells
+    // keys the way *Python* does: a struct declaring `rename="camel"`
+    // holds `max_size` and reads and writes `maxSize`, and every path in
+    // this library is the name a file uses. msgspec carries both halves
+    // as class attributes, so the mapping is built from those — which
+    // also means this conversion imports nothing, and an install with no
+    // msgspec in it never goes looking for one.
+    if !object.is_instance_of::<pyo3::types::PyType>() {
+        let names = object
+            .getattr(pyo3::intern!(py, "__struct_fields__"))
+            .and_then(|names| names.extract::<Vec<String>>());
+        let keys = object
+            .getattr(pyo3::intern!(py, "__struct_encode_fields__"))
+            .and_then(|keys| keys.extract::<Vec<String>>());
+
+        if let (Ok(names), Ok(keys)) = (names, keys) {
+            let mut entries = Map::with_capacity(names.len());
+
+            for (name, key) in names.iter().zip(keys.iter()) {
+                entries.insert(key.clone(), from_py(&object.getattr(name.as_str())?)?);
+            }
+
+            return Ok(Value::Object(entries));
+        }
+    }
+
     Err(pyo3::exceptions::PyTypeError::new_err(format!(
         "{} is not a configuration value: expected a string, number, bool, \
-         None, list, dict, a Pydantic model or a dataclass",
+         None, list, dict, a Pydantic model, a dataclass or a msgspec Struct",
         object
             .get_type()
             .name()

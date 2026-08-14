@@ -125,6 +125,59 @@ def test_the_diagnostics_answer(workspace: Path) -> None:
     assert "60" in str(config.explain("cache.ttl"))
 
 
+def test_sub_hands_a_subsystem_its_own_subtree(workspace: Path) -> None:
+    """The read a subsystem wants: relative paths, not the whole document.
+
+    `Snapshot::sub` is the Rust equivalent, and a schemaless configuration
+    was the one shape that had no way to say it — a caller indexed twice
+    at every read, or built a dict and lost the dotted-path lookup that is
+    `Values`' whole point.
+    """
+    write(
+        "app.json",
+        {
+            "app": {
+                "db": {"pool": {"max_size": 32}, "host": "db.internal"},
+                "debug": True,
+            }
+        },
+    )
+
+    config = DynamicConfig(Values, key="app").file("app.json")
+    config.init()
+
+    values = config.current()
+    db = values.sub("db")
+
+    assert isinstance(db, Values)
+    assert db["host"] == "db.internal"
+    assert db["pool.max_size"] == 32, "and the dotted path still works, one level down"
+    assert values.sub("db.pool")["max_size"] == 32
+    assert db.leaf_paths() == ["host", "pool.max_size"], (
+        "relative, like everything else"
+    )
+
+
+def test_a_sub_of_nothing_is_empty_rather_than_an_error(workspace: Path) -> None:
+    """Twice over, and both are decisions.
+
+    A subsystem handed a section its deployment did not configure should
+    read its own defaults rather than crash on the way to them — and a
+    path that holds a *value* is not a subtree either.
+    """
+    write("app.json", {"app": {"debug": True}})
+
+    config = DynamicConfig(Values, key="app").file("app.json")
+    config.init()
+
+    values = config.current()
+
+    assert dict(values.sub("nothing")) == {}
+    assert dict(values.sub("debug")) == {}, "a leaf is not a table"
+    assert values.sub("nothing").get("anything", "fallback") == "fallback"
+    assert "nothing" not in values, "and __contains__ is how to tell the difference"
+
+
 def test_check_says_it_did_not_compare_field_names(workspace: Path) -> None:
     """The honest answer, and the reason `unknown_checked` exists.
 
@@ -170,6 +223,12 @@ def test_a_redacting_cache_is_refused_without_a_secret_list(workspace: Path) -> 
 
     assert "secret" in str(raised.value).lower(), raised.value
     assert "secrets=" in str(raised.value), "the refusal names the Python fix"
+    # Both halves of the fix, in this language: naming the secrets, or asking
+    # for the mode that redacts nothing. The message used to offer
+    # `CacheMode::Full` — a name Python does not have — and stop there.
+    assert 'cache(path, "full")' in str(raised.value), (
+        "the other way out has to be spelled the way Python spells it"
+    )
     assert not Path("last.json").exists(), "nothing was written"
 
 

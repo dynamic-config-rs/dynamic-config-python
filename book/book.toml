@@ -1,0 +1,30 @@
+[book]
+title = "dynamic-config for Python"
+authors = ["Cevat Batuhan Tolon"]
+description = "Hot-reloadable configuration for Python: Rust resolves, your schema validates, Python reads a cache."
+language = "en"
+src = "src"
+
+# A book of its own rather than eleven chapters in the Rust one, because the
+# reader is a different person: a Python programmer arriving from PyPI landed
+# in a sidebar whose first twenty entries were Rust and had to be told to
+# scroll, and a Rust reader carried eleven chapters describing an engine they
+# use through an attribute. The store crates are deliberately *not* this case
+# — a Consul chapter is read by whoever read the builder tour.
+#
+# One deployment, two directories: `/dynamic-config/` and
+# `/dynamic-config/python/`. Crossing over is a link, not a domain.
+[output.html]
+git-repository-url = "https://github.com/ctolon/dynamic-config"
+edit-url-template = "https://github.com/ctolon/dynamic-config/edit/dev/book-python/src/{path}"
+site-url = "/dynamic-config/python/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+limit-results = 20
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 2
