@@ -5,6 +5,7 @@ around the checks. Each one is safe to re-run and says what it did.
 
 | Script | What it does |
 |---|---|
+| `audit-report.py` | An OSV scan's findings, split into *a fix exists* (fails the job) and *no fix published* (a warning). Exemptions are `osv-scanner.toml`'s and never reach this. |
 | `ci-local.sh` | The whole CI gate locally, in the order that fails fastest. |
 | `claude-review-pr.sh` | Reviews a pull request with Claude locally — title, body, diff, and read-only access to the checkout. `--post` comments the review on the PR; without it, nothing leaves the terminal. |
 | `dismiss-alert.sh` | Dismisses a Dependabot alert with the reason recorded *on the alert* — GitHub's UI leaves that nowhere a reviewer finds later. `--list` shows what is open. |
