@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  # Cargo updates are grouped: what a wheel links is reviewed as one tree.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types: [minor, patch]
+    ignore:
+      # PyO3 majors change the binding's whole vocabulary.
+      - dependency-name: pyo3
+        update-types: [version-update:semver-major]
+  # The wheels' Python dependencies are extras rather than requirements, so
+  # there is no lockfile to bump — `scripts/resolve-python-audit.py` is what
+  # resolves them, and the OSV job is what watches them.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # One grouped bump instead of a queue: an action pin is reviewed the same
+    # way whether one moved or five did.
+    groups:
+      actions:
+        patterns: ["*"]
