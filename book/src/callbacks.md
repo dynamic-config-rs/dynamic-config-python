@@ -115,7 +115,7 @@ the caller's for an explicit `reload()`. So:
   holds a thread the watcher needs.
 
 The rule is the one the Rust
-[reload lifecycle](https://ctolon.github.io/dynamic-config/reload-lifecycle.html) gives: compare, then signal
+[reload lifecycle](https://dynamic-config-rs.github.io/reload-lifecycle.html) gives: compare, then signal
 the thing that owns the resource.
 
 ```python
@@ -173,7 +173,7 @@ guard closes.
 
 ## The whole surface, running
 
-[`examples/16_callbacks.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/16_callbacks.py)
+[`examples/16_callbacks.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/16_callbacks.py)
 runs all five shapes end to end, with a stand-in pool that records what
 each hook cost it — including the handover to a thread that owns the
 resource, and the async follower that needs no callback at all.

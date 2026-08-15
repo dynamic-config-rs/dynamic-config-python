@@ -1,0 +1,362 @@
+name: CI
+
+# No push trigger for `dev`: everything on dev travels through a pull
+# request anyway, and a push run would twin the PR run on the same commit —
+# under *required* checks, a deduplicating cancellation poisons the gate
+# (a cancelled twin's "CI is green" reads as failure and blocks the merge).
+# `main` keeps its push trigger because a rebase-merge mints a new SHA that
+# no PR run ever checked.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run cancels the previous on the same ref: a pull request pushed three
+# times in a minute should not occupy three runners proving the same thing
+# about two obsolete commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # A failing build should say what failed, not where in a backtrace it gave up.
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry. The remote
+      # wheel is the crate that pulls it in.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      # `--lib` on purpose: an extension module links no libpython, so
+      # neither crate has a test target for `--all-targets` to build.
+      - run: cargo clippy -p dynamic-config-python --lib --all-features
+      - run: cargo clippy -p dynamic-config-python-remote --lib --all-features
+  python:
+    name: the Python bindings
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every interpreter the package claims to support. abi3 means one
+        # wheel covers the range, but the *Python* half — the facade, the
+        # decorator, the asyncio bridge — is ordinary code that a version
+        # can break: `asyncio.timeout` arrived in 3.11, dataclass slots
+        # in 3.10, and the typing syntax the stubs use has moved twice.
+        # Claiming a floor and testing only the ceiling is how a floor
+        # quietly stops being true.
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      # The framework packages are here for the three integration
+      # examples: an example that only compiles is not an example.
+      # msgspec is here and *not* in the free-threaded job below: it
+      # publishes no `cp314t` wheel, so installing it there would build
+      # it from source or fail, and the msgspec tests skip themselves
+      # when it is absent.
+      - run: pip install maturin pytest pytest-asyncio pydantic pydantic-settings msgspec mypy ruff fastapi flask django httpx
+      # `maturin build` rather than `develop`: this produces the wheel a
+      # user would install, and the next step installs *that*, so the
+      # packaging is exercised by the same job that exercises the code.
+      - run: maturin build --out dist
+        working-directory: dynamic-config-python
+      - run: pip install --no-index --find-links dist dynamic-config-py
+        working-directory: dynamic-config-python
+      - run: python -m pytest tests -q
+        working-directory: dynamic-config-python
+      # The base install has no dependencies, and that claim is worth a
+      # job rather than a sentence: a fresh interpreter, the wheel and
+      # nothing else, running the suite that needs nothing else.
+      - name: the base install, with no schema library anywhere
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/pip install --quiet --no-index --find-links dist dynamic-config-py
+          /tmp/bare/bin/pip install --quiet pytest
+          /tmp/bare/bin/python -c "import dynamic_config, sys; assert not [m for m in sys.modules if m.startswith(('pydantic', 'msgspec'))], 'importing the package pulled in a schema library'"
+          /tmp/bare/bin/python -m pytest tests/test_dataclasses.py tests/test_msgspec.py -q
+          /tmp/bare/bin/python examples/17_dataclasses.py > /dev/null
+        working-directory: dynamic-config-python
+      # The stubs are shipped, so they are checked: `current()` has to
+      # come back as the caller's model rather than as `Any`.
+      # The package, and a file written the way a *caller* writes one:
+      # types that regress for a user are invisible to a test suite.
+      - run: mypy --strict python/dynamic_config/ tests/typing/
+        working-directory: dynamic-config-python
+      # Lint and format, over the package, the suite and the examples —
+      # an example is code people copy, so it is held to the same rules.
+      - run: ruff check .
+        working-directory: dynamic-config-python
+      - run: ruff format --check .
+        working-directory: dynamic-config-python
+      # The examples are documentation people run, so they run here; a
+      # stale one is worse than a missing one. Each writes into a
+      # temporary directory and needs no setup.
+      - name: every example
+        working-directory: dynamic-config-python
+        run: |
+          for example in examples/[0-9]*.py; do
+            echo "── $example"
+            python "$example" > /dev/null
+          done
+
+  python-remote:
+    name: the remote wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling. The middle versions are covered by the
+        # base package's job: this wheel's Python half is a thin facade over
+        # store objects, and what it can break is packaging, not syntax.
+        python: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      # The two wheels version independently of the workspace but not of
+      # each other: the extra `dynamic-config-py[remote]` resolves to a
+      # distribution that requires the base one, so a hand edit that moves
+      # only one of them is a release that cannot install.
+      - name: the two Python packages agree on a version
+        run: |
+          base=$(grep -m1 '^version' dynamic-config-python/Cargo.toml)
+          remote=$(grep -m1 '^version' dynamic-config-python-remote/Cargo.toml)
+          if [ "$base" != "$remote" ]; then
+            echo "::error::the Python packages disagree: base $base, remote $remote"
+            exit 1
+          fi
+      # The remote wheel carries the etcd client, which compiles its gRPC
+      # stubs at build time and needs the `protoc` binary the runner image
+      # does not carry. The base wheel's job needs none of this: it carries
+      # no store.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: pip install maturin pytest pytest-asyncio mypy ruff
+      # A target directory each, and it is not a nicety: both wheels' cdylib
+      # is `[lib] name = "_core"`, so they write the same `lib_core.so`. Two
+      # builds sharing one target directory make the second a cache hit on
+      # the first's artefact, and the wheel then carries the *other*
+      # package's extension module — which fails as a missing attribute, a
+      # long way from the cause.
+      - run: maturin build --out dist
+        working-directory: dynamic-config-python
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/python
+      - run: maturin build --out dist
+        working-directory: dynamic-config-python-remote
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/python-remote
+      # Both wheels, installed the way a user installs them.
+      # `../` because this step runs in the remote wheel's directory: the base
+      # wheel's `dist` is its sibling, and pip *warns* about a find-links path
+      # that does not exist rather than failing on it — so the mistake shows
+      # up as "no matching distribution" for a wheel that was built two steps
+      # earlier.
+      - run: pip install --no-index --find-links ../dynamic-config-python/dist --find-links dist dynamic-config-py-remote
+        working-directory: dynamic-config-python-remote
+      # The container-backed cases skip themselves when there is no Docker
+      # daemon; everything else runs against scripted servers.
+      - run: python -m pytest tests -q
+        working-directory: dynamic-config-python-remote
+      - run: mypy --strict python/
+        working-directory: dynamic-config-python-remote
+      - run: ruff check .
+        working-directory: dynamic-config-python-remote
+      - run: ruff format --check .
+        working-directory: dynamic-config-python-remote
+      # The base install must not have gained a remote dependency: the
+      # stores are an extra, and an extra that is not opt-in is not one.
+      - name: the base wheel still imports without this one
+        run: |
+          python -m venv /tmp/base-only
+          /tmp/base-only/bin/pip install --quiet --no-index --find-links dynamic-config-python/dist dynamic-config-py
+          /tmp/base-only/bin/python -c "
+          import dynamic_config
+          try:
+              import dynamic_config.remote
+          except ImportError as error:
+              assert 'remote' in str(error), error
+          else:
+              raise SystemExit('dynamic_config.remote imported without the extra')
+          "
+
+  python-free-threaded:
+    name: the Python bindings, without a GIL
+    runs-on: ubuntu-latest
+    # Ten repeats of the concurrency suite on top of the whole suite; a hung
+    # job should fail rather than sit on a runner.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          # 3.14t and not 3.13t: PyO3 0.29 dropped 3.13t, following CPython,
+          # which declared free-threading supported rather than experimental in
+          # 3.14. A 3.13t row here would not build.
+          python-version: "3.14t"
+      # A `t` interpreter that turned its GIL back on for some unrelated reason
+      # would make every assertion below pass for the wrong reason. Check the
+      # premise before relying on it.
+      - name: the interpreter really has no GIL
+        run: |
+          python -VV
+          python -c "
+          import sys, sysconfig
+          assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded build'
+          assert not sys._is_gil_enabled(), 'the GIL is on before anything was imported'
+          "
+      - run: pip install maturin pytest pytest-asyncio pydantic pydantic-settings fastapi flask django httpx
+      # `-i python` is the part that does the work, and it is not optional:
+      # without it maturin builds an abi3 wheel against no interpreter in
+      # particular and never looks at the one on PATH. Pointed at a
+      # `Py_GIL_DISABLED` interpreter it emits a version-specific `cp314t`
+      # wheel instead, because abi3 has no free-threaded form.
+      #
+      # `--no-default-features` switches off the `abi3` Cargo feature as well.
+      # That does not change the tag — maturin decides that from the
+      # interpreter — but it means pyo3 is never *asked* for abi3, so the
+      # build does not depend on pyo3's documented-as-backward-compatible
+      # fallback from abi3 to a free-threaded build.
+      - run: maturin build --no-default-features -i python --out dist
+        working-directory: dynamic-config-python
+      - name: the wheel is tagged for this interpreter, not abi3
+        working-directory: dynamic-config-python
+        run: |
+          ls dist
+          if ls dist/*abi3*.whl >/dev/null 2>&1; then
+            echo "::error::the free-threaded build produced an abi3 wheel"
+            exit 1
+          fi
+          ls dist/*cp314-cp314t*.whl >/dev/null
+      - run: pip install --no-index --find-links dist dynamic-config-py
+        working-directory: dynamic-config-python
+      # The declaration, checked from outside the suite too: a module without
+      # `Py_mod_gil = Py_MOD_GIL_NOT_USED` makes CPython re-enable the GIL for
+      # the whole process at import, and everything after it would then be
+      # measuring a GIL build wearing a `t`.
+      - name: importing the extension does not re-enable the GIL
+        run: |
+          python -c "
+          import sys
+          import dynamic_config
+          assert not sys._is_gil_enabled(), 'importing dynamic_config re-enabled the GIL'
+          "
+      - run: python -m pytest tests -q
+        working-directory: dynamic-config-python
+      # The races that matter are not deterministic, and a single green run of
+      # them is an anecdote. Ten is not proof either, but it is the floor.
+      - name: the concurrency suite, ten times over
+        working-directory: dynamic-config-python
+        run: |
+          for iteration in $(seq 1 10); do
+            echo "── iteration $iteration"
+            python -m pytest tests/test_threading.py tests/test_shutdown.py \
+              tests/test_free_threaded.py -q
+          done
+
+  docs-links:
+    name: documentation links resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # A README is the first thing anyone reads and the last thing anyone
+      # tests. A dead anchor in it is a small bug that is very easy to ship.
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          args: >-
+            --no-progress
+            --include-fragments
+            --max-retries 3
+            --retry-wait-time 5
+            --exclude '^https://github\.com/dynamic-config-rs/'
+            --exclude '^https://docs\.rs/dynamic-config'
+            --exclude '^https://dynamic-config-rs\.github\.io'
+            README.md CONTRIBUTING.md SECURITY.md RELEASING.md
+            AGENTS.md scripts/README.md
+            dynamic-config*/README.md dynamic-config*/CHANGELOG.md
+            book/src/*.md .claude/skills/*/SKILL.md
+          fail: true
+
+  actionlint:
+    name: workflows lint clean
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The workflows are code that only runs in production. actionlint
+      # catches the typo'd `if:` expression and the misspelled input before a
+      # release does.
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+
+  # The one status branch protection requires. Requiring every job by name
+  # breaks the moment a matrix row is renamed; requiring this gate never
+  # does. `if: always()` because a gate that is skipped when a dependency
+  # fails would count as "not failed" and wave the merge through.
+  ci-ok:
+    name: CI is green
+    needs:
+      - fmt
+      - clippy
+      - python
+      - python-remote
+      - python-free-threaded
+      - docs-links
+      - actionlint
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job this gate needs has succeeded
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "$results"
+          case "$results" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac

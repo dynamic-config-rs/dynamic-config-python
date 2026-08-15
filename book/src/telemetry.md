@@ -15,7 +15,7 @@ if not status.is_healthy:
 Everything here is a snapshot of a handful of atomic loads: nothing is
 re-read, no source is touched, nothing can block. That is what makes it
 cheap enough to take on every scrape — and it is the same contract the
-Rust [`telemetry`](https://ctolon.github.io/dynamic-config/telemetry.html) feature makes, through the same
+Rust [`telemetry`](https://dynamic-config-rs.github.io/telemetry.html) feature makes, through the same
 engine.
 
 ## `ConfigStatus`

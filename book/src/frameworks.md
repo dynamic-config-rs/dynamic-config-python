@@ -92,7 +92,7 @@ handle when the watcher should simply live as long as the process — the
 binding stops it at interpreter shutdown either way.
 
 The runnable version is
-[`examples/10_fastapi_service.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/10_fastapi_service.py).
+[`examples/10_fastapi_service.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/10_fastapi_service.py).
 
 ## Flask
 
@@ -114,7 +114,7 @@ close over it, or hang it on the app object (`app.extensions["config"]`)
 so blueprints can reach it.
 
 Runnable:
-[`examples/11_flask_service.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/11_flask_service.py).
+[`examples/11_flask_service.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/11_flask_service.py).
 
 ## Django
 
@@ -145,7 +145,7 @@ watcher from an `AppConfig.ready()` hook rather than from `settings.py`,
 so it starts once per process and after the app registry is built.
 
 Runnable:
-[`examples/12_django_settings.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/12_django_settings.py).
+[`examples/12_django_settings.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/12_django_settings.py).
 
 ## Workers and CLIs
 

@@ -146,7 +146,7 @@ breaking.
   lazily, owned by the remote module and started when the first store that
   needs one is constructed; the base wheel still refuses the engine's
   `tokio` feature. See the book's
-  [Remote Stores in Rust](../book-python/src/remote-wheel.md).
+  [Remote Stores in Rust](https://dynamic-config-rs.github.io/python/remote-wheel.html).
 
   `dynamic_config/remote.py` re-exports exactly what `dynamic_config_remote`
   exports, and that is now asserted as a **set equality in both suites**.
@@ -204,7 +204,7 @@ breaking.
   `describe()` is asked once, when the source is installed, because the
   engine reads it on the load path and a load must not re-enter Python.
 - **A free-threading audit, as a book page**
-  ([Free-Threaded CPython](https://ctolon.github.io/dynamic-config/python/free-threading.html)).
+  ([Free-Threaded CPython](https://dynamic-config-rs.github.io/python/free-threading.html)).
   Every `static`, every `#[pyclass]`, and every place correctness rode on
   the GIL without saying so. Two fixes came out of it, both below.
   **Nothing has been run on a free-threaded interpreter**, so the module
@@ -361,7 +361,7 @@ breaking.
   table covers what is under it, and the first install always counts,
   so a hook that sets something up runs at startup). The comparison is
   `changed_paths`, so a changed secret is noticed without being printed.
-  [Callbacks](https://ctolon.github.io/dynamic-config/python/callbacks.html)
+  [Callbacks](https://dynamic-config-rs.github.io/python/callbacks.html)
   is the chapter; `tests/test_callbacks.py` pins the contract — what the
   arguments mean, that a read inside a hook sees the new model, that
   hooks run in registration order on the thread that reloaded, and that

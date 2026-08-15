@@ -66,7 +66,7 @@ request costs an attribute lookup rather than a boundary crossing.
 Linux (manylinux 2_28) x86-64 and aarch64, macOS x86-64 and arm64, Windows
 x86-64. Raising the floor is treated as a breaking change and will not
 happen before 1.0. The full table, and what each row is tested with, is in
-[Stability & Production Use](https://ctolon.github.io/dynamic-config/python/stability.html).
+[Stability & Production Use](https://dynamic-config-rs.github.io/python/stability.html).
 
 ## What it gives you
 
@@ -240,7 +240,7 @@ The GIL is not held across the fetch — a `fetch()` doing I/O releases it
 the way any Python thread does, measured at 68–102% of a second thread's
 free-running rate — and a `fetch()` may read the configuration it is
 fetching for. [Remote Stores in
-Python](https://ctolon.github.io/dynamic-config/python/remote-stores.html)
+Python](https://dynamic-config-rs.github.io/python/remote-stores.html)
 is the whole story.
 
 ## pydantic-settings
@@ -279,7 +279,7 @@ validation rather than shrugging.
 ## Examples
 
 Eighteen runnable scripts in
-[`examples/`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-python/examples) — the quick start,
+[`examples/`](https://github.com/dynamic-config-rs/dynamic-config-python/tree/main/dynamic-config-python/examples) — the quick start,
 layering and precedence, watching, asyncio (single- and multi-file), the
 decorator (plain, and several configurations on one event loop),
 multi-tenant configuration, secrets and recovery, the diagnostics tour,
@@ -293,7 +293,7 @@ python examples/01_quick_start.py
 
 ## How it works
 
-[Implementation Details](https://ctolon.github.io/dynamic-config/python/internals.html)
+[Implementation Details](https://dynamic-config-rs.github.io/python/internals.html)
 covers the inside: validation hooked *before* the install (which is what
 makes a rejected reload change nothing), the sequence number that
 publishes each model exactly once, the Python-side cache that keeps a
@@ -312,10 +312,10 @@ back on for the process at import. 3.14t and not 3.13t: PyO3 dropped 3.13t
 when CPython promoted free-threading from experimental to supported. The
 audit behind the declaration — and what a green suite still does not prove
 — is
-[Free-Threaded CPython](https://ctolon.github.io/dynamic-config/python/free-threading.html).
+[Free-Threaded CPython](https://dynamic-config-rs.github.io/python/free-threading.html).
 
 ## License
 
 MIT
 
-[`dynamic-config`]: https://github.com/ctolon/dynamic-config
+[`dynamic-config`]: https://github.com/dynamic-config-rs/dynamic-config-python

@@ -114,7 +114,7 @@ await asyncio.gather(
 Each keeps its own watcher, its own generation and its own followers, so
 a flag flipping does not re-parse the database file or wake anything
 watching it.
-[`examples/13_asyncio_many_files.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/13_asyncio_many_files.py)
+[`examples/13_asyncio_many_files.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/13_asyncio_many_files.py)
 is the whole shape, executor included.
 
 ### The same thing, on the model classes
@@ -153,7 +153,7 @@ default), which is what makes decorating at module level safe: importing
 a module should not begin filesystem work, and a loop that does not exist
 yet cannot be the thing loading.
 
-[`examples/14_async_decorator_services.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/14_async_decorator_services.py)
+[`examples/14_async_decorator_services.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/14_async_decorator_services.py)
 runs three decorated services on one loop — concurrent loads, a watcher
 and a follower each, and generations that prove one team's edit left the
 other two configurations alone.
@@ -221,5 +221,5 @@ config.on_reload(lambda old, new: loop.call_soon_threadsafe(queue.put_nowait, ne
 ```
 
 That is the same advice the Rust
-[reload lifecycle](https://ctolon.github.io/dynamic-config/reload-lifecycle.html) gives: compare, then signal
+[reload lifecycle](https://dynamic-config-rs.github.io/reload-lifecycle.html) gives: compare, then signal
 the thing that owns the resource.

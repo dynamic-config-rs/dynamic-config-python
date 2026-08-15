@@ -23,7 +23,7 @@ dynamic-config-py ~= 0.1.2
 ```
 
 A patch will not break you. Pre-1.0 a break bumps the minor, is called out
-in [the changelog](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/CHANGELOG.md),
+in [the changelog](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/CHANGELOG.md),
 and comes with what to change on your side — and there is no plan to spend
 one before 1.0.
 

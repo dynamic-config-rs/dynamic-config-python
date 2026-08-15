@@ -162,7 +162,7 @@ one is constructed — `Etcd`, `Nats` and `S3` do; `Consul`, `Firestore`,
 `dynamic_config_remote.runtime_started()` is how that promise is tested.
 Nothing running on it touches Python, which is what makes an immortal
 runtime safe here. See the book's
-[Remote stores in Rust, from Python](https://ctolon.github.io/dynamic-config/python/remote-wheel.html).
+[Remote stores in Rust, from Python](https://dynamic-config-rs.github.io/python/remote-wheel.html).
 
 ## Which stores
 

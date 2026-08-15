@@ -53,11 +53,11 @@ dynamic_config = "dynamic_config.pytest"
 # wants the documentation for *this* package, and a Rust workspace's front
 # page is a long way from `pip install`. The repository is one row down,
 # under the label that says what it is.
-Homepage = "https://ctolon.github.io/dynamic-config/python/"
-Documentation = "https://ctolon.github.io/dynamic-config/python/reference.html"
-Repository = "https://github.com/ctolon/dynamic-config"
-Changelog = "https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/CHANGELOG.md"
-Issues = "https://github.com/ctolon/dynamic-config/issues"
+Homepage = "https://dynamic-config-rs.github.io/python/"
+Documentation = "https://dynamic-config-rs.github.io/python/reference.html"
+Repository = "https://github.com/dynamic-config-rs/dynamic-config-python"
+Changelog = "https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/CHANGELOG.md"
+Issues = "https://github.com/dynamic-config-rs/dynamic-config-python/issues"
 
 [project.optional-dependencies]
 # `pip install dynamic-config-py` gives you dataclass schemas and the whole

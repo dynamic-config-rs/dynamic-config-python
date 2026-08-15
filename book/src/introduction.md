@@ -41,7 +41,7 @@ Everything the Rust side does with sources happens here unchanged: files
 merge in call order, the environment beats them, `.env` sits just below
 the real environment, profiles overlay sibling files, discovery sits
 below listed files, and the runtime layers bracket the rest. The
-[precedence chapter](https://ctolon.github.io/dynamic-config/sources-and-precedence.html) is the contract for both
+[precedence chapter](https://dynamic-config-rs.github.io/sources-and-precedence.html) is the contract for both
 languages.
 
 ## Where validation happens, and why it matters
@@ -109,7 +109,7 @@ async for db in config.changes():      # any event loop, no callback
 
 Hooks run on whichever thread performed the reload, so keep them short:
 compare, then *signal* the subsystem that owns the resource — the
-[reload lifecycle](https://ctolon.github.io/dynamic-config/reload-lifecycle.html) chapter is the same argument in
+[reload lifecycle](https://dynamic-config-rs.github.io/reload-lifecycle.html) chapter is the same argument in
 Rust. A hook that raises is reported through Python's unraisable channel
 and the remaining hooks still run.
 
@@ -183,7 +183,7 @@ under **every** name a file could carry it under, its aliases included,
 because a secret spelled the other way is still a secret
 ([Aliases](types.md#aliases-in-all-four-shapes)). Everything
 downstream follows from it: the redacted
-[last-known-good cache](https://ctolon.github.io/dynamic-config/persistence.html#last-known-good) drops those
+[last-known-good cache](https://dynamic-config-rs.github.io/persistence.html#last-known-good) drops those
 fields, `explain` prints them as `***`, and Pydantic's `ValidationError`
 — which by default echoes the offending input — is scrubbed to
 locations, messages and error types before it crosses the boundary.
@@ -234,7 +234,7 @@ report = config.check()        # would it load? any unknown keys?
 config.snapshot().to_dict()    # the resolved section, as data
 ```
 
-The rules the [diagnostics chapter](https://ctolon.github.io/dynamic-config/validation-diagnostics.html) states hold
+The rules the [diagnostics chapter](https://dynamic-config-rs.github.io/validation-diagnostics.html) states hold
 here too: paths, never values — except `explain`, which is the one
 diagnostic whose job is values, and which redacts the secret ones. Every
 `repr()` in the binding shows shape rather than content, so an object
@@ -388,7 +388,7 @@ sets. [What a schema may be](types.md#what-a-schema-may-be) and
 | Not exposed | Why |
 |---|---|
 | The [store crates](remote-stores.md) themselves | their clients — gRPC, the AWS SDK, three HTTP stacks — would ride into every wheel |
-| Encrypted files | decryption needs a `Decryptor`, which is a Rust trait; decrypt with the [CLI](https://ctolon.github.io/dynamic-config/cli.html) and point this at the result |
+| Encrypted files | decryption needs a `Decryptor`, which is a Rust trait; decrypt with the [CLI](https://dynamic-config-rs.github.io/cli.html) and point this at the result |
 | `save`, JSON Schema | Pydantic already does both, better |
 
 The *door* those crates go through is exposed: `RemoteSource` is
@@ -404,7 +404,7 @@ after the first load, one watcher per configuration, and why
 ## Examples
 
 Eighteen runnable scripts ship with the package —
-[`examples/`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-python/examples),
+[`examples/`](https://github.com/dynamic-config-rs/dynamic-config-python/tree/main/dynamic-config-python/examples),
 from the twenty-line quick start to multi-tenant configuration, the
 diagnostics tour, several configurations on one event loop (as values
 and as decorated classes), every callback shape, an existing

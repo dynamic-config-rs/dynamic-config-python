@@ -1,7 +1,7 @@
 # Limitations
 
 What the Python bindings deliberately do not do, and why. As with the
-Rust crate's [Limitations](https://ctolon.github.io/dynamic-config/limitations.html), the list exists so that a
+Rust crate's [Limitations](https://dynamic-config-rs.github.io/limitations.html), the list exists so that a
 missing feature reads as a decision rather than an oversight — and so
 that anyone who disagrees can argue with the reason instead of guessing
 at one.
@@ -65,7 +65,7 @@ not start.
 `encrypted_file(...)` needs a `Decryptor` implementation, which is a Rust
 trait. Shipping `age` to make one usable would put a crypto stack in
 every wheel for a door only Rust can open. Decrypt with the
-[CLI](https://ctolon.github.io/dynamic-config/cli.html) or your deployment's own tooling and point this at the
+[CLI](https://dynamic-config-rs.github.io/cli.html) or your deployment's own tooling and point this at the
 result.
 
 ### `save` and JSON Schema
@@ -90,7 +90,7 @@ A second `watch()` on the same object raises `AlreadyExists`, exactly as
 the Rust engine does — a second watcher could only mislead. Two
 `DynamicConfig` objects over the same model watch side by side without
 interfering, which is what
-[multi-tenant](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/06_multi_tenant.py)
+[multi-tenant](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/06_multi_tenant.py)
 uses.
 
 ### `validate` is Pydantic's, not a second hook
@@ -260,4 +260,4 @@ would not load at all.
 - **A global default configuration.** `dynamic_config.current()` with no
   object would be a singleton by another name — the same thing the Rust
   crate refuses in
-  [Not planned](https://ctolon.github.io/dynamic-config/limitations.html#not-planned).
+  [Not planned](https://dynamic-config-rs.github.io/limitations.html#not-planned).

@@ -1,6 +1,6 @@
 ---
 name: python-binding-reviewer
-description: Reviews a change to dynamic-config-python against the binding's invariants — validation placement, the read path, the two caches, GIL and thread rules, secrets, shutdown safety, and the documents that go stale silently. Use after changing anything under dynamic-config-python/ or the Rust core's public surface.
+description: Reviews a change to dynamic-config-python against the binding's invariants — validation placement, the read path, the two caches, GIL and thread rules, secrets, shutdown safety, and the documents that go stale silently. Use after changing anything under dynamic-config-python/, or after the engine's public surface moved in dynamic-config-rs/dynamic-config.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---
@@ -64,7 +64,7 @@ round trip. Anything without a configuration meaning is refused at the
 call rather than coerced.
 
 **8. The documents that rot.** A new or changed method has to reach the
-facade (with a docstring), `_core.pyi`, `book-python/src/reference.md`
+facade (with a docstring), `_core.pyi`, `book/src/reference.md`
 (async twins on the same row), the tests, and the crate's CHANGELOG. A
 new source option also reaches the decorator's arguments. Missing stub
 entries are invisible until `mypy --strict` runs; missing reference rows

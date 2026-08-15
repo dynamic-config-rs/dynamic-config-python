@@ -35,20 +35,20 @@ security regression that no test names.
 **Verify MSRV against real toolchains.** `age` declares 1.74 and needs 1.85.
 A manifest is a claim, not a measurement. `just msrv` runs every floor.
 
-**Check CI parity.** Any list that appears in more than one place drifts:
-the `--exclude` lists in ci.yml's parallel and serial test runs, the crate
-lists in the containers job, publish-dry-run, security.yml and the justfile,
-the MSRV matrix against the MSRV tables (the book's, and README's summary).
-Diff them, don't skim them.
+**Check CI parity.** The interpreter matrix in ci.yml, the wheel matrix in
+release.yml, `requires-python` and the classifiers all name versions —
+and the free-threaded job is the only one that proves the GIL is actually
+off. Diff them, don't skim them.
 
 **Audit the stacked `#[cfg]`s.** Two `#[cfg]` attributes on one item AND
 together — `#[cfg(unix)] #[cfg(not(unix))]` compiles to nothing, silently.
 Three tests here never ran for months because of one. Grep for consecutive
 cfg lines and read each pair.
 
-**Check the counts.** Twenty macro arguments, twelve crates, seventeen ci.yml jobs,
-twelve changelogs, twenty-six core examples. Every one of those numbers
-appears in documentation somewhere; recount whenever a list grows.
+**Check the counts.** Two wheels, eight ci.yml jobs, twenty-two examples,
+and the interpreter list in three places: `pyproject.toml`'s classifiers,
+the README's table and the book. PyPI filters on the classifiers, and a
+classifier nobody tested is a claim.
 
 **`cargo clippy -- -W clippy::pedantic`** for the substantive lints only:
 `unnecessary_wraps`, `needless_pass_by_value` on public API, `redundant_clone`,
@@ -61,15 +61,18 @@ appears in documentation somewhere; recount whenever a list grows.
 - Counts anywhere in the documentation — tests, examples, features, crates —
   match reality. Run the suite and count rather than trusting the last number.
 - The book's example output matches what the examples print. Run them.
-- `cargo test -p dynamic-config --test doc_surface` — the generated-method
-  list in the book and on the lib.rs front page against the macro's source.
-- Each companion crate's README is *its own*, not the workspace one.
+- `python -m pytest`, `mypy --strict` and `ruff` all clean, and every public
+  definition carries a docstring — `help()` is this package's manual.
+- The facade, `_core.pyi` and `book/src/reference.md` agree. Nothing else
+  checks that.
+- Each crate's README is *its own*, not the repository's.
 
 ## Release mechanics
 
-- The workspace version, the tag and the changelog agree.
-- Every crate's metadata is complete: `cargo metadata` and check for empty
-  fields rather than reading manifests by eye.
-- `cargo package --list` for each crate: README and LICENSE present, tests and
-  benches excluded.
-- Never run `cargo publish`. `cargo release` prepares; CI publishes on the tag.
+- Both wheels carry the same version, and the remote wheel's
+  `dynamic-config-py>=…` floor names it. `./scripts/release-python.sh
+  --check` proves all three.
+- The version is not already on PyPI — `maturin upload --skip-existing`
+  makes a repeat a silent no-op, which is how a whole wave once published
+  nothing.
+- Never run `maturin upload`. Merging into `main` publishes.

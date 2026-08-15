@@ -63,16 +63,8 @@ dynamic-config = { workspace = true, features = [
 # The shared redaction, so a store URL loses its password by exactly the same
 # rule here as it does in the store crates rather than by a second copy of it.
 dynamic-config-store-core = { workspace = true }
-# The eight stores. Pinned exactly, like every other cross-crate dependency
-# here — a path with no version requirement is a wildcard, and `deny.toml`
-# refuses those (`bans.wildcards = "deny"`): a wildcard is a dependency that
-# cannot be resolved reproducibly.
-#
-# `=` rather than `^`, matching `[workspace.dependencies]`: these crates and
-# the engine they wrap move in lockstep, and a mismatch between the engine
-# statically linked here and the one a store was compiled against is exactly
-# the class of thing an exact pin makes impossible. `cargo release`'s
-# `shared-version` rewrites both numbers when the workspace is bumped.
+# The eight stores, from crates.io. The versions and the two `tls` features
+# are named once in the workspace manifest.
 #
 # `tls` on two of them, because two of them keep their TLS stack behind a
 # feature: `Etcd::with_tls` and `Redis::with_tls` do not exist without it, and
@@ -86,22 +78,18 @@ dynamic-config-store-core = { workspace = true }
 # `rustls-native-certs` to every wheel and change nothing at all. The
 # consequence is documented rather than hidden: etcd over TLS from Python
 # trusts the authority you name and no other.
-dynamic-config-consul = { version = "=0.6.1", path = "../dynamic-config-consul" }
-dynamic-config-etcd = { version = "=0.6.1", path = "../dynamic-config-etcd", features = [
-    "tls",
-] }
-dynamic-config-firestore = { version = "=0.6.1", path = "../dynamic-config-firestore" }
+dynamic-config-consul = { workspace = true }
+dynamic-config-etcd = { workspace = true }
+dynamic-config-firestore = { workspace = true }
 # `gix`, pure Rust, with no feature to choose: the store crate turns on exactly
 # what a shallow single-ref fetch needs and this wheel has no reason to differ.
 # It declares 1.85 and so does not move the floor below, which is 1.88 for
 # other reasons.
-dynamic-config-git = { version = "=0.6.1", path = "../dynamic-config-git" }
-dynamic-config-nats = { version = "=0.6.1", path = "../dynamic-config-nats" }
-dynamic-config-redis = { version = "=0.6.1", path = "../dynamic-config-redis", features = [
-    "tls",
-] }
-dynamic-config-s3 = { version = "=0.6.1", path = "../dynamic-config-s3" }
-dynamic-config-vault = { version = "=0.6.1", path = "../dynamic-config-vault" }
+dynamic-config-git = { workspace = true }
+dynamic-config-nats = { workspace = true }
+dynamic-config-redis = { workspace = true }
+dynamic-config-s3 = { workspace = true }
+dynamic-config-vault = { workspace = true }
 # S3's credential surface, and only S3's. The other six take a string; the
 # AWS SDK takes a `ProvideCredentials` implementation, so this wheel has to
 # name the two crates that trait and its `Credentials` live in to write the

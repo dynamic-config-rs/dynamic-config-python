@@ -46,7 +46,7 @@ anything has loaded — sources are how a configuration is *identified*.
 | `nest(separator)` | The separator that means nesting inside a variable name; `__` unless said |
 | `allow_empty_env()` | Treats `FOO=` as set-to-empty rather than unset |
 | `strict_env()` | Refuses ambiguous spellings — `off`, `no`, `nil` — naming the variable |
-| `whole_document()` | Reads each document as this model's values, with no section header. See [Document Shape](https://ctolon.github.io/dynamic-config/document-shape.html) |
+| `whole_document()` | Reads each document as this model's values, with no section header. See [Document Shape](https://dynamic-config-rs.github.io/document-shape.html) |
 | `env_file(path)` | A `.env` read as the environment layer, just below the real one |
 | `profile_env(variable)` | The variable naming the active profile, for sibling files |
 | `cache(path, mode="redacted")` | A last-known-good cache; `redacted`, `full` or `fingerprint` |
@@ -299,7 +299,7 @@ A configuration with **no schema class**: pass `Values` where a model
 goes, and every load hands back one of these — a `Mapping` read by dotted
 path. See [`Values`: a configuration with no
 schema](types.md#values-a-configuration-with-no-schema) for what it gives
-up, and the [schemaless chapter](https://ctolon.github.io/dynamic-config/schemaless.html) for the Rust half.
+up, and the [schemaless chapter](https://dynamic-config-rs.github.io/schemaless.html) for the Rust half.
 
 | Member | Answers |
 |---|---|
@@ -341,7 +341,7 @@ declaration-shaped spelling, not a second set of behaviour.
 | `nest` | `None` | `.nest(separator)` | What means nesting inside a variable name; `__` unless given |
 | `allow_empty_env` | `False` | `.allow_empty_env()` | Treat `FOO=` as set-to-empty rather than unset |
 | `strict_env` | `False` | `.strict_env()` | Refuse ambiguous spellings — `off`, `no`, `nil` |
-| `whole_document` | `False` | `.whole_document()` | The documents carry **no section header**: each one *is* this model's values. See [Document Shape](https://ctolon.github.io/dynamic-config/document-shape.html) |
+| `whole_document` | `False` | `.whole_document()` | The documents carry **no section header**: each one *is* this model's values. See [Document Shape](https://dynamic-config-rs.github.io/document-shape.html) |
 | `env_files` | `()` | `.env_file(path)` | `.env` files, read as the environment layer and below the real one |
 | `profile_env` | `None` | `.profile_env(variable)` | The variable naming the active profile, for sibling files |
 | `cache` / `cache_mode` | `None` / `"redacted"` | `.cache(path, mode)` | Last-known-good cache; `redacted`, `full` or `fingerprint` |

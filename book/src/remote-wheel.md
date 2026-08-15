@@ -454,7 +454,7 @@ store's `repr` and `describe()`, what the engine records as provenance, and
 the text of both refusals.
 
 There is **no way to turn verification off**, and the
-[Rust chapter](https://ctolon.github.io/dynamic-config/remote-stores.html#there-is-no-way-to-turn-verification-off)
+[Rust chapter](https://dynamic-config-rs.github.io/remote/remote-stores.html#there-is-no-way-to-turn-verification-off)
 argues that at length. The short version: it could not be uniform, it
 answers nothing `with_ca_certificate_file` does not, and every client
 underneath still has its own dangerous switch under its own frightening

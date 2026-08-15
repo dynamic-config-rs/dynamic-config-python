@@ -1,11 +1,9 @@
-# Build output. The workspace shares one — and it is not the only one: a
-# doctest that writes a file writes it relative to *its* crate, under a
-# `target/` an anchored rule would not have covered. Unanchored, so every
-# one of them is ignored wherever it is.
+# Build output. Unanchored, so a doctest that writes under its own crate's
+# `target/` is covered too.
 target/
 
-# `cargo package` and `cargo publish` write here; the tarballs are artefacts of
-# a release, not part of one.
+# `cargo package` and `cargo publish` write here; the tarballs are
+# artefacts of a release, not part of one.
 **/*.crate
 
 # Backtraces and profiler output.
@@ -13,8 +11,7 @@ target/
 perf.data*
 flamegraph.svg
 
-# Editors and desktop environments. Kept short on purpose: a repository is not
-# the place to enumerate everybody's tools, and a global gitignore is.
+# Editors and desktop environments.
 .vscode/
 .idea/
 *.swp
@@ -24,42 +21,25 @@ flamegraph.svg
 # leftover means a run was interrupted.
 Cargo.toml.orig
 
-# Every file in here is written by the tests themselves at run time — the
-# suites create the directory and their own fixtures, so a checkout carries
-# none of it and `cargo test` never dirties the tree.
-/dynamic-config/tests/scratch/
+# The book's build output.
+book/book/
 
-# Same, for the config server's watcher test: the system temporary directory
-# is a symlink on macOS and an 8.3 short name on Windows, and a file watcher
-# notices both — so that test writes under the crate instead.
+# Written by the suites at run time — they create the directory and their
+# own fixtures, so a checkout carries none of it.
 /dynamic-config-server/tests/scratch/
 
-# And the Node suite, which watches files for the same reason and writes
-# its fixtures in the same place.
-/dynamic-config-node/tests/scratch/
-
-/RELEASE-CHECKLIST.md
-
-# The Python extension's build and tool output. The wheel and the compiled
-# module are built by maturin (into `target/` and, for an editable install,
-# next to the package); the caches and environments belong to whoever ran
-# the tools, not to the repository.
-
-# Build artefacts
+# The wheels' build and tool output.
 dist/
 build/
 wheels/
 *.egg-info/
 *.egg
-# The compiled extension, wherever an editable install drops it.
 *.so
 *.pyd
-*.dylib
 *.py[cod]
 **/__pycache__/
 
-# Virtual environments. Named every way people name them, because a
-# checkout should not care which one you chose.
+# Virtual environments, named every way people name them.
 .venv/
 venv/
 env/
@@ -78,10 +58,3 @@ ENV/
 coverage.xml
 htmlcov/
 .benchmarks/
-
-# Implementation notes for the next wave: working documents, written to be
-# read while building and thrown away after. Deliberately untracked — the
-# decisions that survive belong in ROADMAP.md, the book or a changelog,
-# and a design doc that outlives its implementation is a second source of
-# truth nobody updates.
-/docs/implementation/

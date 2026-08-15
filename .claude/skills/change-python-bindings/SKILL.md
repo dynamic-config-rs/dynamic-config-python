@@ -63,7 +63,7 @@ Adding or changing a method on `_core.Config` means **all** of these:
    `__init__.py` if the name is public.
 3. `python/dynamic_config/_core.pyi` — the stub, or `mypy --strict`
    stops seeing through the boundary.
-4. `book-python/src/reference.md` — the API reference table. A method
+4. `book/src/reference.md` — the API reference table. A method
    with an async twin goes on the *same row* as its twin.
 5. `tests/` — the behaviour, not the call. A call a *service* makes
    belongs in `test_integration.py` as well, exercised the way a service
@@ -163,15 +163,16 @@ ruff check . && ruff format --check .
 python examples/01_quick_start.py
 ```
 
-`cargo test --workspace` **excludes** this crate: an extension module
-links no libpython, so it has no test target. Its suite is pytest, and
-CI runs it across every supported interpreter.
+There is no `cargo test` for these crates: an extension module links no
+libpython, so neither has a test target. The suite is pytest, and CI runs
+it across every supported interpreter.
 
 ## Two things about versions
 
-- **The package versions independently** of the Rust crates and is
-  excluded from `cargo release`. Bump `version` in its `Cargo.toml` when
-  *this* changes; a Rust-only release must not drag it along.
+- **Both wheels version together**, and neither follows the engine: the
+  engine is a caret dependency from crates.io, so its releases arrive
+  without one here. `./scripts/release-python.sh patch` moves both
+  manifests, both changelogs and the floor between them in one commit.
 - **The floor is CPython 3.9.** `vermin --target=3.9- python/ tests/
   examples/` says whether that is still true, and CI runs the suite on
   3.9 through 3.14. `X | Y` in a runtime position is the usual way to

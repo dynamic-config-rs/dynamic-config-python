@@ -219,6 +219,6 @@ this one what it has.
 
 ## The complete example
 
-[`examples/18_python_remote_source.py`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-python/examples/18_python_remote_source.py)
+[`examples/18_python_remote_source.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/18_python_remote_source.py)
 runs all of the above end to end, GIL measurement included, and needs no
 server.

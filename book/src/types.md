@@ -124,7 +124,7 @@ than an addition to that one.
 ### `Values`: a configuration with no schema
 
 The Python spelling of the crate's [schemaless
-configuration](https://ctolon.github.io/dynamic-config/schemaless.html), for the keys a program learns at run
+configuration](https://dynamic-config-rs.github.io/schemaless.html), for the keys a program learns at run
 time rather than declares — a plugin host, a feature-flag table, a tool
 reading a file it did not write. Pass the **class**; every load hands
 back an **instance**:
