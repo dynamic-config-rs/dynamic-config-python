@@ -26,6 +26,8 @@ breaking.
 
 ## [Unreleased]
 
+## 0.1.3 — 2026-08-16
+
 ### Changed
 
 - **The wheels moved to their own repository**,
