@@ -26,6 +26,32 @@ breaking.
 
 ## [Unreleased]
 
+## 0.1.3 — 2026-08-16
+
+### Changed
+
+- **The wheels moved to their own repository**,
+  [dynamic-config-rs/dynamic-config-python](https://github.com/dynamic-config-rs/dynamic-config-python),
+  and release on their own schedule from there. The package name, the
+  import name and the API are unchanged; what moved is where issues are
+  filed and where the book lives —
+  [dynamic-config-rs.github.io/python/](https://dynamic-config-rs.github.io/python/).
+
+- **The project links on PyPI say more.** `Homepage` is the book rather
+  than a Rust workspace's front page, `Documentation` points at the API
+  reference, and `Issues` was added — a reader arriving from PyPI now
+  lands on Python prose in one click.
+
+- **More keywords and classifiers**, because both are how PyPI's search
+  and filters find a package at all: `Framework :: Pydantic`,
+  `Framework :: AsyncIO`, the systems-administration and distributed
+  topics, and the words a person actually types (`dotenv`, `toml`,
+  `twelve-factor`, `live-reload`).
+
+- **The engine and the store crates are named with a caret** in the
+  manifests these wheels are built from, so a patch release of either
+  reaches a source build without a release here.
+
 ## 0.1.2 — 2026-08-14
 
 ### Added
