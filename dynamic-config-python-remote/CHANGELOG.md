@@ -30,6 +30,18 @@ is the door into this one.
 
 ## [Unreleased]
 
+### Changed
+
+- **Moved with the base wheel** to
+  [dynamic-config-rs/dynamic-config-python](https://github.com/dynamic-config-rs/dynamic-config-python).
+  `dynamic-config-py[remote]` still resolves to this pair, and the pair
+  still versions together.
+
+- **The project links and the classifiers**, as in the base wheel:
+  `Documentation` points at the remote-wheel chapter of the Python book,
+  `Issues` was added, and the store names are keywords so a search for
+  `etcd` or `vault` finds this at all.
+
 ## 0.1.2 — 2026-08-14
 
 ### Changed
