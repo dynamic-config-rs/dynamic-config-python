@@ -79,6 +79,9 @@ watch.stop()                           # or use it as a context manager
 config.current()                       # the model; raises before the first load
 config.try_current()                   # or None
 config.replace(Database(host="x"))     # install one you built
+
+with config.running():                 # or the whole lifetime as one block
+    serve()
 ```
 
 Every call that touches the sources has an async twin —
@@ -103,27 +106,52 @@ model watch side by side.
 def resize(old, new):
     pool.resize(new.pool_size)
 
+@config.on_reload_async                # or as a task on this event loop
+async def reconnect(old, new):
+    await pool.resize(new.pool_size)
+
 async for db in config.changes():      # any event loop, no callback
     pool.resize(db.pool_size)
 ```
 
-Hooks run on whichever thread performed the reload, so keep them short:
-compare, then *signal* the subsystem that owns the resource — the
+By default hooks run on whichever thread performed the reload, so keep
+them short: compare, then *signal* the subsystem that owns the resource
+— the
 [reload lifecycle](https://dynamic-config-rs.github.io/reload-lifecycle.html) chapter is the same argument in
 Rust. A hook that raises is reported through Python's unraisable channel
 and the remaining hooks still run.
 
-[Callbacks](callbacks.md) is the whole surface: what `old` and
+…or say where the hook should run instead: `dispatch=` moves it to the
+configuration executor or onto the loop that registered it, and
+`backpressure=` says what to do when installs arrive faster than it
+finishes. [Callbacks](callbacks.md) is the whole surface: what `old` and
 `new` mean, why a read inside a hook already sees the new model, the
-filter above, the scoped `with config.on_reload(...)` form, and how to
-hand work to the thread that owns the resource.
+filter above, the scoped `with config.on_reload(...)` form, and the two
+tables in full.
 
-`changes()` is an async iterator whose wait happens on a worker thread
-with the GIL released, so it drives on asyncio, uvloop, trio's asyncio
-compatibility layer — anything. There is a blocking `changed(timeout=…)`
-for threads and an awaitable `changed_async(timeout=…)` for a single
-shot. [Async & asyncio](async.md) is the whole story: which calls
-block, which thread each piece runs on, and how cancellation behaves.
+`changes()` is an async iterator resolved by a notifier thread parked in
+the engine with the GIL released, so it drives on asyncio, uvloop, trio's
+asyncio compatibility layer — anything — and cancelling it is immediate
+rather than polled. There is a blocking `changed(timeout=…)` for threads,
+an awaitable `changed_async(timeout=…)` for a single shot, and
+`events()` for the diagnostic stream of installs and refusals.
+[Async & asyncio](async.md) is the whole story: which calls block, which
+thread each piece runs on, and how cancellation behaves.
+
+### Several configurations at once
+
+```python
+group = ConfigGroup(database, cache, queue)
+
+with group.running():                  # init all, watch all, stop all
+    serve()
+
+group.reload_atomic()                  # every member validates, or none installs
+```
+
+The group owns lifecycle, not storage — `database.current()` is still the
+read path. [Async & asyncio](async.md#several-configurations-one-lifecycle)
+has the rest, including why `reload_atomic` exists.
 
 ## Testing
 
@@ -324,6 +352,21 @@ Database.current().host      # `str`, and it completes
 decorator fills them in. It adds no fields, so `model_fields` is
 unchanged, and the runtime behaviour is identical either way.
 
+**`Model.config` keeps the model's type too**, which matters as soon as
+you reach past the six classmethods for the async surface:
+
+```python
+await Database.config.init_async()
+
+async for database in Database.config.changes():
+    database.host                # `str`, not `Any`
+```
+
+That is a descriptor rather than an annotation, because a `ClassVar`
+cannot carry a type variable — the same device `classmethod` uses in
+typeshed, and the reason `Database.config` is `DynamicConfig[Database]`
+rather than `DynamicConfig[Any]`.
+
 The decorator on its own still works and is not deprecated — but it
 cannot be made visible to a checker, and `tests/typing/usage.py` in the
 repository is where that promise is kept: `mypy --strict` runs over a
@@ -403,12 +446,14 @@ after the first load, one watcher per configuration, and why
 
 ## Examples
 
-Eighteen runnable scripts ship with the package —
+Twenty-seven runnable scripts ship with the package —
 [`examples/`](https://github.com/dynamic-config-rs/dynamic-config-python/tree/main/dynamic-config-python/examples),
 from the twenty-line quick start to multi-tenant configuration, the
 diagnostics tour, several configurations on one event loop (as values
-and as decorated classes), every callback shape, an existing
-`pydantic-settings` class, a remote store written in Python, and the
+and as decorated classes), every callback shape — synchronous and
+dispatched — a group of configurations reloaded atomically, the event
+stream, an existing `pydantic-settings` class, a remote store written in
+Python with a synchronous client and one with an async client, and the
 three framework integrations. None needs a server or a setup step,
 and all of them run in CI, because an example nobody runs is
 documentation that has already started rotting — and the framework ones

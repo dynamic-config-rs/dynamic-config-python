@@ -28,9 +28,13 @@ dynamic-config-python/
     _dataclasses.py          a plain dataclass as a schema
     _decorator.py            @dynamic_config
     _diagnostics.py          Origin, Explanation, Report, Snapshot, …
+    _dispatch.py             Dispatch, Backpressure — where a hook runs
     _errors.py               NotInitialisedError
-    _executor.py             set_executor
+    _events.py               Reloaded, ReloadFailed — what events() yields
+    _executor.py             set_executor, configure_executor, executor
+    _group.py                ConfigGroup: several configurations, one lifecycle
     _lifetime.py             Watch, HookGuard, the atexit sweep
+    _notify.py               the notifier thread that answers an await
     _msgspec.py              a msgspec Struct as a schema
     _pydantic.py             a Pydantic model as a schema
     _schema.py               which adapter a class gets; the shared questions
@@ -43,7 +47,7 @@ dynamic-config-python/
     test_msgspec.py          the msgspec schema, and the three answers of its own
     test_pydantic.py         the class surface, aliases, BaseSettings
     test_integration.py      whole scenarios, and the shipped examples
-  examples/                  twenty-two runnable scripts, all run in CI
+  examples/                  twenty-seven runnable scripts, all run in CI
   benchmarks/read_path.py    the numbers the book quotes
 ```
 
@@ -124,10 +128,14 @@ a design conversation rather than a patch.
   This was a real deadlock, found by `tests/test_threading.py`.
 - **Release the GIL for anything that reads files** (`py.detach`), and
   let the validate hook re-acquire it.
-- **Waits are bounded slices** (a quarter second), so cancellation is
-  prompt, and they stay on the *default* executor even when a caller
-  supplies one — a wait is a parking spot, and parking several in a pool
-  sized for work starves it.
+- **A wait uses no executor and no timeout.** One notifier thread per
+  configuration (`python/dynamic_config/_notify.py`) parks in
+  `wait_for_change(seen, None)` and resolves futures with
+  `loop.call_soon_threadsafe`. Two rules follow: the Rust wait must end
+  on `release()` as well as on an install (`Wake.closed`), and every
+  resolution carries the generation it is for — a consumer that noticed
+  an install by reading the generation itself would otherwise report the
+  notifier's answer for the same install a second time.
 - **Releasing the GIL is not the same as not blocking the loop.** An
   event loop runs on the calling thread, so a `py.detach`-wrapped
   syscall still stalls it. That is why `watch` has an `_async` twin even

@@ -66,8 +66,8 @@ distribution.
 
 | Synchronous | Async twin | Does |
 |---|---|---|
-| `remote(source)` | — | Installs the store. Chains; fetches nothing. Allowed **after** the first load too, unlike the source methods |
-| `refresh_remote()` | `refresh_remote_async()` | Reads the store and keeps the document, for the next load |
+| `remote(source)` | — | Installs the store — a [`RemoteSource`](#remotesource) or an [`AsyncRemoteSource`](#asyncremotesource). Chains; fetches nothing. Allowed **after** the first load too, unlike the source methods |
+| `refresh_remote()` | `refresh_remote_async()` | Reads the store and keeps the document, for the next load. The synchronous one raises on an async store |
 | `clear_remote()` | — | Drops the fetched document; the source stays installed |
 | `remote_description` | — | What the installed store's `describe()` said, or `None` |
 
@@ -119,9 +119,19 @@ engine reads it on the load path and a load must not re-enter Python.
 | `replace(model)` | — | Installs a model you built, firing the hooks. `status()` and `snapshot()` still describe the last real load |
 | `changed(timeout=None)` | `changed_async(timeout=None)` | Blocks until the next install; `None` on timeout |
 | — | `changes()` | An async iterator over every install from here on |
+| — | `events(failure_poll=None)` | An async iterator of [`Reloaded`](#reloaded-and-reloadfailed) and `ReloadFailed`. No event carries a value |
 | `watch(debounce=0.25, poll_interval=None)` | `watch_async(…)` | Starts a watcher; returns a [`Watch`](#watch) |
-| `on_reload(hook)` | — | Runs `hook(old, new)` after every install; returns a [`HookGuard`](#hookguard). Usable as a decorator |
+| `watching(debounce=0.25, poll_interval=None)` | `watching_async(…)` | The same as a block, stopped on the way out |
+| `running(watch=True, …)` | `running_async(watch=True, …)` | init, then watch, then stop — the whole lifetime as one block, yielding the first model |
+| `on_reload(hook, *, dispatch=None, backpressure=None)` | — | Runs `hook(old, new)` after every install; returns a [`HookGuard`](#hookguard). Usable as a decorator |
 | `on_change(*paths)` | — | The decorator form of the same, firing only when one of `paths` moved. See [Callbacks](callbacks.md) |
+| — | `on_reload_async(hook, *, backpressure=LATEST)` | `on_reload` for a coroutine function: a task on the registering loop |
+| — | `on_change_async(*paths, backpressure=LATEST)` | The same, filtered by path |
+
+`changed_async`, `changes` and `events` are answered by a notifier thread
+rather than by polling, so cancelling one is immediate and an idle
+service does no work at all — see
+[how a wait is answered](async.md#how-a-wait-is-answered).
 
 `current()` and `try_current()` have no async twin because there is
 nothing to await: the model is cached on the object, so the read is an
@@ -276,9 +286,28 @@ versions on its own schedule — so a bug report can name both.
 ### `set_executor(executor)`
 
 Process-wide choice of which thread pool pays for the blocking half of
-the async calls. `None` restores the loop's own. Waits deliberately stay
-on the loop's default executor — see
-[Async & asyncio](async.md#which-pool-pays-for-the-blocking-half).
+the async calls. `None` restores the loop's own. The pool stays the
+caller's: it is never shut down here, including at exit. Waiting for a
+reload uses no executor at all, so this sizes loads and refreshes only —
+see [Async & asyncio](async.md#which-pool-pays-for-the-blocking-half).
+
+### `configure_executor(workers=2, *, thread_name_prefix="dynamic-config")`
+
+`set_executor` with the pool built for you, and owned: the threads are
+named `dynamic-config-blocking-N`, and the pool is shut down at
+interpreter exit. Calling it again replaces the pool and closes the
+previous one. Returns the pool.
+
+### `executor(pool=None, *, workers=2)`
+
+The choice as a block, restored on the way out. A pool this builds is
+closed at the end of the block; a pool passed in is left alone, because
+it is the caller's.
+
+```python
+with dynamic_config.executor(workers=4):
+    await config.init_async()
+```
 
 ### `secret_paths(model)`
 
@@ -360,8 +389,10 @@ and shows `whole_document=True` against a file with no header.
 The mixin that makes those six visible to a type checker and to an
 editor — `class Database(Configured, BaseModel)`. Runtime behaviour is
 unchanged; what changes is that `Database.current()` is typed as
-`Database` rather than being an `attr-defined` error. See
-[the decorator](introduction.md#the-decorator).
+`Database` rather than being an `attr-defined` error, and that
+`Database.config` is `DynamicConfig[Database]` — so everything reached
+through it, `changes()` and `changed_async()` included, stays the
+model's own type. See [the decorator](introduction.md#the-decorator).
 
 ## Types
 
@@ -429,10 +460,62 @@ first refresh:
 Name the store, never the credential that reaches it: `describe()` is
 what `source_of(...)` reports and what every remote error carries.
 
+### `AsyncRemoteSource`
+
+The same door for a store whose client is async: `async def fetch()` and
+a synchronous `describe()`. `refresh_remote_async()` awaits `fetch()` on
+the calling loop and hands the document to the engine afterwards, so an
+async client runs on the loop it was built on; a cancelled refresh
+cancels the fetch, and a raising `fetch()` reaches the caller as its own
+exception rather than as `RemoteError`. The synchronous
+`refresh_remote()` raises on such a store rather than driving it from a
+private loop. See [Async & asyncio](async.md#a-remote-store-with-an-async-client).
+
 ### `Format`
 
 `Format.JSON`, `Format.TOML`, `Format.YAML` — a `str` enum, so a plain
 `"json"` is accepted too.
+
+### `ConfigGroup`
+
+Several configurations under one lifecycle:
+`ConfigGroup(db, cache, queue, concurrency=None)`.
+
+| Method | Does |
+|---|---|
+| `init()` / `init_async()` | Loads every member; the first failure stops the group |
+| `reload()` / `reload_async()` | Reloads every member independently |
+| `reload_atomic()` / `reload_atomic_async()` | Every member validates, or none installs |
+| `watch(…)` / `watch_async(…)`, `stop()` | A watcher per member, and stopping all of them |
+| `watching(…)` / `watching_async(…)` | The same as a block |
+| `running(watch=True, …)` / `running_async(…)` | init, then watch, then stop |
+| `status()`, `generations()` | Per key, for a health endpoint |
+| `configs`, `len()`, iteration, `repr()` | The members themselves |
+
+`concurrency` bounds how many members load at once; `None` — the default
+— loads them one at a time. The group owns lifecycle, not storage: the
+read path is still `db.current()`.
+
+### `Dispatch` and `Backpressure`
+
+`str` enums naming where a reload hook runs and what happens when
+installs outrun it: `Dispatch.INLINE` / `EXECUTOR` / `ASYNCIO`, and
+`Backpressure.EVERY` / `LATEST` / `SERIAL` / `CANCEL_PREVIOUS`. A value
+outside the set is a `ValueError` naming the ones inside it. See
+[Callbacks](callbacks.md#saying-where-a-hook-runs).
+
+### `Reloaded` and `ReloadFailed`
+
+What `events()` yields — frozen dataclasses, both carrying `generation`
+and `at` (a Unix timestamp).
+
+| Type | Fields |
+|---|---|
+| `Reloaded` | `changed` — the dotted paths that moved — and `reason` |
+| `ReloadFailed` | `kind`, `path`, and `consecutive`: how many refusals in a row |
+
+**No event carries a value**, the same rule `explain()` and `check()`
+follow: a value in an event is a secret in a log.
 
 ### `Watch`
 

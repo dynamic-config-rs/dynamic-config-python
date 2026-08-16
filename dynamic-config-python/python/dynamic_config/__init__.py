@@ -86,10 +86,13 @@ from ._diagnostics import (
     UnknownKey,
     changed_paths,
 )
+from ._dispatch import Backpressure, Dispatch
 from ._errors import NotInitialisedError
-from ._executor import set_executor
+from ._events import ConfigEvent, Reloaded, ReloadFailed
+from ._executor import configure_executor, executor, set_executor
+from ._group import ConfigGroup
 from ._lifetime import HookGuard, Watch
-from ._remote import Format, RemoteSource
+from ._remote import AsyncRemoteSource, Format, RemoteSource
 from ._schema import secret_paths
 from ._telemetry import ConfigStatus, Exposition, Failure, RemoteStatus
 from ._values import Values
@@ -104,13 +107,18 @@ __version__: str = _core.__version__
 __engine_version__: str = _core.__engine_version__
 
 __all__ = [
+    "AsyncRemoteSource",
     "AuthError",
     "BackendError",
+    "Backpressure",
     "Change",
+    "ConfigEvent",
+    "ConfigGroup",
     "ConfigStatus",
     "Configured",
     "Contribution",
     "DecryptError",
+    "Dispatch",
     "DynamicConfig",
     "DynamicConfigError",
     "EnvError",
@@ -125,6 +133,8 @@ __all__ = [
     "NotInitialisedError",
     "Origin",
     "ParseError",
+    "ReloadFailed",
+    "Reloaded",
     "RemoteError",
     "RemoteSource",
     "RemoteStatus",
@@ -138,7 +148,9 @@ __all__ = [
     "__engine_version__",
     "__version__",
     "changed_paths",
+    "configure_executor",
     "dynamic_config",
+    "executor",
     "secret_paths",
     "set_executor",
 ]

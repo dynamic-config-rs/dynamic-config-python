@@ -15,7 +15,7 @@ That is the whole idea. The rest of this page is what the arguments mean,
 what a hook may and may not do, and the four other shapes the same thing
 takes.
 
-## The five shapes
+## The shapes
 
 | Shape | Runs |
 |---|---|
@@ -23,6 +23,8 @@ takes.
 | `@config.on_reload` | the same, with the function's name kept |
 | `@config.on_change("path", …)` | only when one of those paths moved |
 | `with config.on_reload(hook):` | for the length of the block |
+| `@config.on_reload_async` | as a task on the loop that registered it |
+| `@config.on_change_async("path", …)` | the same, filtered by path |
 | `async for model in config.changes()` | on your event loop, no callback |
 
 All but the last hand back a [`HookGuard`](reference.md#hookguard), which
@@ -105,14 +107,17 @@ Details worth knowing:
 
 ## What a hook may do, and what it should not
 
-A hook runs **on the thread that reloaded** — the watcher's thread, or
-the caller's for an explicit `reload()`. So:
+By default a hook runs **on the thread that reloaded** — the watcher's
+thread, or the caller's for an explicit `reload()`. So:
 
 - **Do** compare, log, set a flag, put something on a queue, call
   `loop.call_soon_threadsafe`.
 - **Do not** rebuild a connection pool, make a network call, or take a
   lock a request handler holds. A slow hook delays the *next* reload and
   holds a thread the watcher needs.
+
+…unless you say where it should run instead, which is what the next
+section is for.
 
 The rule is the one the Rust
 [reload lifecycle](https://dynamic-config-rs.github.io/reload-lifecycle.html) gives: compare, then signal
@@ -134,10 +139,51 @@ config.on_reload(lambda old, new: loop.call_soon_threadsafe(queue.put_nowait, ne
 the better answer: same events, awaited rather than pushed, and the body
 runs on the loop where it can `await`.
 
+## Saying where a hook runs
+
+The handover above, written as a parameter:
+
+```python
+@config.on_reload_async                       # a task on this loop
+async def reconnect(previous, current):
+    await pool.resize(current.pool.max_size)
+
+config.on_reload(rewrite_template, dispatch=Dispatch.EXECUTOR)   # a worker
+```
+
+`dispatch` takes `Dispatch.INLINE` (the default), `Dispatch.EXECUTOR`
+— the configuration executor, for work that is slow but synchronous — or
+`Dispatch.ASYNCIO`, which is the default for a coroutine function and the
+only value that accepts one. Anything but `inline` separates two
+latencies that are otherwise one: how long a reload takes, and how long
+the work it triggers takes.
+
+`backpressure` says what happens when installs arrive faster than the
+hook finishes: `Backpressure.LATEST` (the default off the installing
+thread) keeps only the newest, `SERIAL` runs every one in order, `EVERY`
+starts each as it arrives, and `CANCEL_PREVIOUS` — `asyncio` only —
+cancels the call still running. `latest` is the default because it is
+what configuration usually means: resizing a pool to a size nobody is
+asking for any more is work done for nothing.
+
+Both are `str` enums, so `dispatch="executor"` works, and a typo is a
+`ValueError` at registration rather than a callback that silently never
+runs. An async hook must be registered from the loop that should run it —
+a watcher thread has no loop of its own to fall back on, so registering
+without one raises.
+
+A hook that runs somewhere else is still a hook: it cannot fail a reload,
+and it is the same `HookGuard` that unregisters it.
+
+[Async & asyncio](async.md#callbacks-that-are-not-free) has the two
+tables in full.
+
 ## When a hook raises
 
 The raise is *reported*, through Python's unraisable channel
-(`sys.unraisablehook`), and the hooks after it still run. The install
+(`sys.unraisablehook`) for a hook that ran on a thread, or the loop's
+exception handler for one that ran as a task — and the hooks after it
+still run. The install
 itself already happened — a hook is a reaction, not a veto. What vetoes
 a bad configuration is validation, which runs
 [before anything installs](introduction.md#where-validation-happens-and-why-it-matters).
@@ -174,6 +220,9 @@ guard closes.
 ## The whole surface, running
 
 [`examples/16_callbacks.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/16_callbacks.py)
-runs all five shapes end to end, with a stand-in pool that records what
-each hook cost it — including the handover to a thread that owns the
+runs the synchronous shapes end to end, with a stand-in pool that records
+what each hook cost it — including the handover to a thread that owns the
 resource, and the async follower that needs no callback at all.
+[`examples/24_async_callbacks.py`](https://github.com/dynamic-config-rs/dynamic-config-python/blob/main/dynamic-config-python/examples/24_async_callbacks.py)
+does the same for the dispatched ones: three deployments faster than the
+pool can follow, under each backpressure policy in turn.

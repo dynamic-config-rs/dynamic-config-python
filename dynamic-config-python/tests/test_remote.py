@@ -9,6 +9,7 @@ this binding's own doing rather than a user's mistake.
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import json
 import threading
@@ -20,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from dynamic_config import (
+    AsyncRemoteSource,
     AuthError,
     BackendError,
     DynamicConfig,
@@ -754,3 +756,111 @@ async def test_refresh_remote_async_reports_a_failure_the_same_way(
 
     assert "hunter2-do-not-log" not in str(raised.value)
     assert isinstance(raised.value.__cause__, RuntimeError)
+
+
+# ── A store whose fetch is a coroutine ─────────────────────────────────
+
+
+class AsyncStore(AsyncRemoteSource):
+    """The async twin of `Store`: awaited on the caller's loop."""
+
+    def __init__(self, document: str) -> None:
+        self.document = document
+        self.fetches = 0
+        self.threads: list[str] = []
+
+    async def fetch(self) -> tuple[str, Format]:
+        self.fetches += 1
+        await asyncio.sleep(0)
+        self.threads.append(threading.current_thread().name)
+
+        return self.document, Format.JSON
+
+    def describe(self) -> str:
+        return "an async store"
+
+
+async def test_an_async_source_is_awaited_and_merged(workspace: Path) -> None:
+    store = AsyncStore(document())
+    config = DynamicConfig(Database, key="db").remote(store)
+
+    assert config.remote_description == "an async store"
+
+    await config.refresh_remote_async()
+    await config.init_async()
+
+    assert config.current().host == "remote"
+    assert store.fetches == 1
+    assert store.threads == [threading.current_thread().name], (
+        "an async client belongs to the loop it was built on"
+    )
+
+
+async def test_an_async_source_refuses_the_synchronous_refresh(
+    workspace: Path,
+) -> None:
+    config = DynamicConfig(Database, key="db").remote(AsyncStore(document()))
+
+    with pytest.raises(RuntimeError, match="refresh_remote_async"):
+        config.refresh_remote()
+
+
+async def test_a_raising_async_fetch_reaches_the_caller(workspace: Path) -> None:
+    """Nothing has entered the engine yet, so the exception is the real one."""
+
+    class Broken(AsyncRemoteSource):
+        async def fetch(self) -> tuple[str, Format]:
+            raise TimeoutError("the store took too long")
+
+        def describe(self) -> str:
+            return "a broken async store"
+
+    config = DynamicConfig(Database, key="db").remote(Broken())
+
+    with pytest.raises(TimeoutError):
+        await config.refresh_remote_async()
+
+
+async def test_a_cancelled_refresh_cancels_the_fetch(workspace: Path) -> None:
+    started = asyncio.Event()
+    cancelled = False
+
+    class Slow(AsyncRemoteSource):
+        async def fetch(self) -> tuple[str, Format]:
+            nonlocal cancelled
+
+            started.set()
+
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+            return document(), Format.JSON
+
+        def describe(self) -> str:
+            return "a slow async store"
+
+    config = DynamicConfig(Database, key="db").remote(Slow())
+    refreshing = asyncio.create_task(config.refresh_remote_async())
+
+    await asyncio.wait_for(started.wait(), 5)
+    refreshing.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await refreshing
+
+    assert cancelled, "a worker thread could never have offered this"
+
+
+async def test_swapping_a_source_forgets_the_other_one(workspace: Path) -> None:
+    config = DynamicConfig(Database, key="db").remote(AsyncStore(document()))
+
+    await config.refresh_remote_async()
+
+    config.remote(Store(json.dumps({"db": {"host": "sync", "port": 1}})))
+    config.refresh_remote()  # no longer async, so this is allowed again
+    config.init()
+
+    assert config.current().host == "sync"

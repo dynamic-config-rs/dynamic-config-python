@@ -12,20 +12,23 @@ concurrently with `asyncio.gather`, watched independently, and followed
 by one task each. The blocking half of every load runs on an executor of
 this service's own, so a configuration reload never queues behind
 whatever else the default pool is doing.
+
+When the three share a lifetime rather than only a loop, `ConfigGroup`
+is the same thing without the bookkeeping — see
+[`23_config_group.py`](23_config_group.py) and the last section here.
 """
 
 from __future__ import annotations
 
 import asyncio
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 import dynamic_config
 from _shared import show
-from dynamic_config import DynamicConfig
+from dynamic_config import ConfigGroup, DynamicConfig
 
 
 class Database(BaseModel):
@@ -70,8 +73,12 @@ async def main() -> None:
         # Configuration gets its own two threads, so a reload never waits
         # behind an unrelated batch job on the default executor. This is
         # the Python-side twin of the Rust crate's `set_blocking_executor`.
-        pool = ThreadPoolExecutor(2, thread_name_prefix="config")
-        dynamic_config.set_executor(pool)
+        #
+        # `configure_executor` builds and *owns* it: the threads are named
+        # `dynamic-config-blocking-N` in a thread dump, and the pool is
+        # closed at interpreter exit. `set_executor(pool)` is the other
+        # door, for a pool the program already has and still owns.
+        dynamic_config.configure_executor(2)
 
         database: DynamicConfig[Database] = DynamicConfig(
             Database, key="database"
@@ -131,8 +138,20 @@ async def main() -> None:
         for watch in watches:
             watch.stop()
 
+        show("the same three, as a group")
+        # Everything above that was bookkeeping rather than application
+        # logic — the gather, the list of watches, stopping each in turn —
+        # is what `ConfigGroup` is. The read path does not change:
+        # `database.current()` is still the read.
+        group = ConfigGroup(database, cache, features)
+
+        async with group.running_async(debounce=0.05, poll_interval=0.05):
+            print(f"  generations {group.generations()}")
+            print(f"  healthy     {[s.is_healthy for s in group.status().values()]}")
+
+        print("  and the block stopped all three watchers on its way out")
+
         dynamic_config.set_executor(None)
-        pool.shutdown(wait=False)
 
 
 if __name__ == "__main__":

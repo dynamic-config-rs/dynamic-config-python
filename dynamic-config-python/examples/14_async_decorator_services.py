@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -97,12 +98,15 @@ async def main() -> None:
             for name, service in zip(seen, services)
         ]
 
-        watches = [
-            await service.config.watch_async(debounce=0.05, poll_interval=0.05)
-            for service in services
-        ]
+        # `AsyncExitStack` rather than a list of handles and a `finally`
+        # that stops each: a watcher started in a block cannot be left
+        # running by an exception on the way out of it.
+        async with AsyncExitStack() as watching:
+            for service in services:
+                await watching.enter_async_context(
+                    service.config.watching_async(debounce=0.05, poll_interval=0.05)
+                )
 
-        try:
             # One file changes. The other two configurations do not move —
             # separate engines, separate generations, separate followers.
             show("one team edits one file")
@@ -124,12 +128,14 @@ async def main() -> None:
             await Database.config.reload_async()
             print(f"  Database.current() → {Database.current().host}")
             print(f"  source_of('host')  → {Database.source_of('host')}")
-        finally:
-            for follower in followers:
-                follower.cancel()
 
-            for watch in watches:
-                watch.stop()
+        # One turn of the loop before cancelling: the notifier resolves a
+        # waiting task immediately, but "immediately" is still after the
+        # reload's caller has been given control back.
+        await asyncio.sleep(0.05)
+
+        for follower in followers:
+            follower.cancel()
 
         show("what each follower saw")
         for name, lines in seen.items():

@@ -10,11 +10,22 @@ so `current()` is an attribute lookup.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
+import threading
 import warnings
 import weakref
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from concurrent.futures import Executor
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
+from types import SimpleNamespace
 from typing import (
     Any,
     Callable,
@@ -34,10 +45,13 @@ from ._diagnostics import (
     UnknownKey,
     changed_paths,
 )
+from ._dispatch import Backpressure, Dispatch
 from ._errors import NotInitialisedError
+from ._events import ConfigEvent, Reloaded, ReloadFailed
 from ._executor import default_executor
 from ._lifetime import _LIVE_CONFIGS, HookGuard, Watch, _register
-from ._remote import RemoteSource
+from ._notify import Notifier
+from ._remote import AsyncRemoteSource, RemoteSource, _AwaitedDocument
 from ._schema import is_values_type, schema_for
 from ._settings import (
     _SETTINGS_SOURCING,
@@ -49,6 +63,21 @@ from ._settings import (
 from ._telemetry import ConfigStatus, RemoteStatus
 
 M = TypeVar("M")
+
+#: What :meth:`DynamicConfig._tick` answers when the interval elapsed and
+#: no install arrived. A sentinel rather than `None`, which already means
+#: *this configuration was released*.
+_TICK = object()
+
+
+def _refusal(status: ConfigStatus, consecutive: int) -> ReloadFailed:
+    """The `ReloadFailed` for whatever the last refusal was."""
+    return ReloadFailed(
+        generation=int(status.generation),
+        kind=status.last_failure.kind if status.last_failure else "unknown",
+        path=status.last_failure.path if status.last_failure else "",
+        consecutive=consecutive,
+    )
 
 
 def _touches(wanted: frozenset[str], moved: Sequence[Change]) -> bool:
@@ -74,10 +103,12 @@ class DynamicConfig(Generic[M]):
 
     __slots__ = (
         "__weakref__",
+        "_async_remote",
         "_cached",
         "_core",
         "_executor",
         "_model",
+        "_notifier_instance",
         "_overrides",
         "_schema",
     )
@@ -192,7 +223,28 @@ class DynamicConfig(Generic[M]):
         # sees the new value when it asks `current()`.
         self._core.on_reload(publish)
 
+        # The event-loop bridge, built on the first await and not before:
+        # a purely synchronous program never starts a notifier thread.
+        self._notifier_instance: Notifier | None = None
+        # The model the last `events()` turn reported, for `changed`.
+        # Set by `remote()` when the store is an `AsyncRemoteSource`.
+        self._async_remote: _AwaitedDocument | None = None
+
         _register(_LIVE_CONFIGS, self)
+
+    def _notifier(self, loop: object) -> Notifier:
+        """The notifier for this configuration, started on first use.
+
+        One per configuration rather than one per waiter: fifty
+        configurations with two consumers each park fifty threads, not a
+        hundred, and none of them wakes until something installs.
+        """
+        del loop  # every loop shares the one notifier; the future carries its own
+
+        if self._notifier_instance is None:
+            self._notifier_instance = Notifier(self._core, self.key)
+
+        return self._notifier_instance
 
     @classmethod
     def from_settings(
@@ -466,7 +518,7 @@ class DynamicConfig(Generic[M]):
 
     # ── The remote store ───────────────────────────────────────────────
 
-    def remote(self, source: RemoteSource) -> DynamicConfig[M]:
+    def remote(self, source: RemoteSource | AsyncRemoteSource) -> DynamicConfig[M]:
         """Reads this configuration's remote store from a Python object.
 
         ``source`` is a :class:`RemoteSource` — an object with ``fetch()``
@@ -496,7 +548,19 @@ class DynamicConfig(Generic[M]):
         ``describe()`` is asked once, here, because the engine reads it on
         the load path and a load must not re-enter Python.
         """
-        self._core.remote(source)
+        if isinstance(source, AsyncRemoteSource):
+            # An async store cannot be called from the engine's worker
+            # thread, so what the engine gets is a courier: the coroutine
+            # is awaited on the caller's loop, and this hands the result
+            # across. Kept on `self` because `refresh_remote_async` is the
+            # one that fills it.
+            bridge = _AwaitedDocument(source)
+            self._async_remote = bridge
+            self._core.remote(bridge)
+        else:
+            self._async_remote = None
+            self._core.remote(source)
+
         return self
 
     def refresh_remote(self) -> None:
@@ -514,19 +578,47 @@ class DynamicConfig(Generic[M]):
         bad afternoon.
 
         Takes effect on the next :meth:`init` or :meth:`reload`.
+
+        Raises `RuntimeError` if the installed store is an
+        :class:`AsyncRemoteSource`: awaiting is what that store needs, and
+        there is no loop here to await on.
         """
+        # Checked here rather than left to the courier, which would have
+        # the engine wrap it as a `RemoteError` whose message is withheld
+        # — the right treatment for a store's exception, and the wrong one
+        # for a caller who used the wrong method.
+        if self._async_remote is not None:
+            raise RuntimeError(
+                f"{type(self._async_remote.source).__name__} is an "
+                "AsyncRemoteSource: its fetch() is a coroutine, so call "
+                "`await config.refresh_remote_async()` rather than "
+                "`config.refresh_remote()`"
+            )
+
         self._core.refresh_remote()
 
     async def refresh_remote_async(self) -> None:
         """:meth:`refresh_remote`, without blocking the event loop.
 
-        The fetch runs on a worker thread, so a ``fetch()`` written with a
-        blocking client — which is most of them — does not stall the loop.
-        Note what this does *not* do: it does not make ``fetch()`` itself
-        awaitable. A source that wants an async client should run its own
-        loop inside ``fetch()``, or fetch on a thread of its own and hand
-        this one what it has.
+        For a :class:`RemoteSource` the fetch runs on a worker thread, so
+        a ``fetch()`` written with a blocking client — which is most of
+        them — does not stall the loop.
+
+        For an :class:`AsyncRemoteSource` the coroutine is awaited right
+        here, on the calling loop, and only the merge that follows goes to
+        a thread. That ordering is the point: an async client belongs to
+        the loop it was built on.
         """
+        bridge = self._async_remote
+
+        if bridge is not None:
+            # Awaited first, and on this loop. A raising `fetch()` reaches
+            # the caller as its own exception rather than as `RemoteError`,
+            # because nothing has entered the engine yet — and a cancelled
+            # task cancels the fetch, which is the thing a worker thread
+            # could never offer.
+            bridge.hand_over(await bridge.source.fetch())
+
         await asyncio.get_running_loop().run_in_executor(
             self._pool, self._core.refresh_remote
         )
@@ -707,7 +799,97 @@ class DynamicConfig(Generic[M]):
 
         return Watch(inner)
 
-    def on_reload(self, hook: Callable[[M | None, M], None]) -> HookGuard:
+    @contextmanager
+    def watching(
+        self, debounce: float = 0.25, poll_interval: float | None = None
+    ) -> Iterator[Watch]:
+        """:meth:`watch` as a block, stopped on the way out.
+
+            with config.watching():
+                serve()
+
+        The handle returned by :meth:`watch` is already a context manager;
+        this is the shape that never names it, and so cannot leak it by
+        forgetting to::
+
+            watch = config.watch()   # stopped only if nothing raises first
+        """
+        watch = self.watch(debounce, poll_interval)
+
+        try:
+            yield watch
+        finally:
+            watch.stop()
+
+    @asynccontextmanager
+    async def watching_async(
+        self, debounce: float = 0.25, poll_interval: float | None = None
+    ) -> AsyncIterator[Watch]:
+        """:meth:`watching`, started off the loop."""
+        watch = await self.watch_async(debounce, poll_interval)
+
+        try:
+            yield watch
+        finally:
+            watch.stop()
+
+    @contextmanager
+    def running(
+        self,
+        watch: bool = True,
+        debounce: float = 0.25,
+        poll_interval: float | None = None,
+    ) -> Iterator[M]:
+        """Load, watch, serve, stop — one block, yielding the first model.
+
+            with config.running() as database:
+                serve(database)
+
+        ``database`` is the model as it was at startup; later installs go
+        to ``current()`` and to the hooks, as they always do.
+        """
+        model = self.init_and_current()
+
+        if not watch:
+            yield model
+            return
+
+        with self.watching(debounce, poll_interval):
+            yield model
+
+    @asynccontextmanager
+    async def running_async(
+        self,
+        watch: bool = True,
+        debounce: float = 0.25,
+        poll_interval: float | None = None,
+    ) -> AsyncIterator[M]:
+        """:meth:`running` for a service that starts on a loop.
+
+        The shape a FastAPI ``lifespan`` wants::
+
+            @asynccontextmanager
+            async def lifespan(app):
+                async with config.running_async() as database:
+                    app.state.database = database
+                    yield
+        """
+        model = await self.init_and_current_async()
+
+        if not watch:
+            yield model
+            return
+
+        async with self.watching_async(debounce, poll_interval):
+            yield model
+
+    def on_reload(
+        self,
+        hook: Callable[[M | None, M], None],
+        *,
+        dispatch: Dispatch | str | None = None,
+        backpressure: Backpressure | str | None = None,
+    ) -> HookGuard:
         """Runs ``hook(old, new)`` after every install.
 
         ``old`` is ``None`` for the first install and the previous model
@@ -719,9 +901,9 @@ class DynamicConfig(Generic[M]):
         ``current()`` agrees with the ``new`` argument rather than lagging
         it by one.
 
-        The hook runs on whichever thread performed the reload — the
-        watcher's, or the caller's for an explicit ``reload()`` — so keep
-        it short: compare, then signal the subsystem that owns the
+        By default the hook runs on whichever thread performed the reload
+        — the watcher's, or the caller's for an explicit ``reload()`` — so
+        keep it short: compare, then signal the subsystem that owns the
         resource. A raising hook is reported through Python's unraisable
         channel, and the hooks after it still run.
 
@@ -731,8 +913,147 @@ class DynamicConfig(Generic[M]):
             @config.on_reload
             def resize(old, new):
                 pool.resize(new.pool_size)
+
+        Parameters:
+            dispatch: where the hook runs — :attr:`Dispatch.INLINE`
+                (the default) on the installing thread,
+                :attr:`Dispatch.EXECUTOR` on the configuration executor,
+                :attr:`Dispatch.ASYNCIO` as a task on the loop that
+                registered it. A coroutine function defaults to
+                ``asyncio`` and is refused by the other two, which have
+                nothing to await it with.
+
+                Anything but ``inline`` separates two latencies that are
+                otherwise one: how long a reload takes, and how long the
+                work it triggers takes. A hook that rebuilds a connection
+                pool should not be able to delay the next install.
+            backpressure: what happens when installs outrun the hook —
+                :attr:`Backpressure.LATEST` (the default off the
+                installing thread) keeps only the newest,
+                :attr:`Backpressure.SERIAL` runs every one in order,
+                :attr:`Backpressure.EVERY` starts each as it arrives, and
+                :attr:`Backpressure.CANCEL_PREVIOUS` (``asyncio`` only)
+                cancels the call still running.
+
+                An ``inline`` hook is already one at a time, so ``every``
+                is the only policy it can have.
         """
-        return HookGuard(self._core, self._core.on_reload(hook), hook)
+        # Always, even when neither argument was given: a coroutine
+        # function registered with no `dispatch` would otherwise be called
+        # inline, return a coroutine nobody awaits, and do nothing at all
+        # except emit a warning at the next collection.
+        wrapped = self._wrap_hook(hook, dispatch, backpressure)
+
+        return HookGuard(self._core, self._core.on_reload(wrapped), hook)
+
+    def _wrap_hook(
+        self,
+        hook: Callable[..., Any],
+        dispatch: Dispatch | str | None,
+        backpressure: Backpressure | str | None,
+    ) -> Callable[[M | None, M], None]:
+        """Turns a hook into the inline callable the engine calls.
+
+        Whatever the policy, what the engine gets back is a *fast*
+        synchronous function: it hands the work somewhere else and
+        returns, so the install that triggered it is never waiting on the
+        callback. That separation is the whole point of the parameter.
+        """
+        # A guard is a callable that forwards, so registering one again —
+        # which is what `on_change_async` does, and what anyone chaining
+        # two registrations does — must look through it to the function
+        # underneath. Asking a guard whether it is a coroutine function
+        # answers about the guard.
+        target: Callable[..., Any] = hook
+
+        if isinstance(hook, HookGuard) and hook.hook is not None:
+            target = hook.hook
+
+        coroutine = inspect.iscoroutinefunction(target)
+        dispatch = (
+            Dispatch(dispatch)
+            if dispatch is not None
+            else (Dispatch.ASYNCIO if coroutine else Dispatch.INLINE)
+        )
+
+        if coroutine and dispatch is not Dispatch.ASYNCIO:
+            raise ValueError(
+                f"{getattr(target, '__name__', target)!r} is a coroutine function, "
+                f"which only dispatch={Dispatch.ASYNCIO.value!r} can run"
+            )
+
+        if not coroutine and dispatch is Dispatch.ASYNCIO:
+            raise ValueError(
+                f"dispatch={Dispatch.ASYNCIO.value!r} needs a coroutine "
+                f"function; {getattr(target, '__name__', target)!r} is not one"
+            )
+
+        default = (
+            Backpressure.EVERY if dispatch is Dispatch.INLINE else Backpressure.LATEST
+        )
+        policy = Backpressure(backpressure) if backpressure is not None else default
+
+        if policy is Backpressure.CANCEL_PREVIOUS and dispatch is not Dispatch.ASYNCIO:
+            raise ValueError(
+                "cancel_previous cancels a task, and only "
+                f"dispatch={Dispatch.ASYNCIO.value!r} has tasks to cancel"
+            )
+
+        if dispatch is Dispatch.INLINE:
+            return hook
+
+        if dispatch is Dispatch.ASYNCIO:
+            return _asyncio_dispatcher(target, policy)
+
+        # A callable rather than the pool itself: `configure_executor`
+        # may not have been called yet when the hook is registered.
+        return _executor_dispatcher(target, policy, lambda: self._pool)
+
+    def on_reload_async(
+        self,
+        hook: Callable[[M | None, M], Awaitable[None]],
+        *,
+        backpressure: Backpressure | str = Backpressure.LATEST,
+    ) -> HookGuard:
+        """`on_reload` for a coroutine function.
+
+        Sugar for ``on_reload(hook, dispatch=Dispatch.ASYNCIO)``, and the
+        spelling an async program reaches for::
+
+            @config.on_reload_async
+            async def reconnect(previous, current):
+                await pool.resize(current.pool.max_size)
+
+        Register it from the loop that should run it: the watcher
+        schedules the task with `call_soon_threadsafe` onto *that* loop and
+        moves on, so a slow callback delays nothing but itself.
+        """
+        return self.on_reload(
+            hook,  # type: ignore[arg-type]
+            dispatch=Dispatch.ASYNCIO,
+            backpressure=backpressure,
+        )
+
+    def on_change_async(
+        self,
+        *paths: str,
+        backpressure: Backpressure | str = Backpressure.LATEST,
+    ) -> Callable[[Callable[[M | None, M], Awaitable[None]]], HookGuard]:
+        """:meth:`on_change` for a coroutine function.
+
+        ::
+
+            @config.on_change_async("redis.url")
+            async def reconnect(previous, current):
+                await redis.reconnect(current.redis.url)
+        """
+
+        def register(hook: Callable[[M | None, M], Awaitable[None]]) -> HookGuard:
+            return self.on_change(*paths)(
+                self._wrap_hook(hook, Dispatch.ASYNCIO, backpressure)
+            )
+
+        return register
 
     def on_change(
         self, *paths: str
@@ -808,33 +1129,40 @@ class DynamicConfig(Generic[M]):
 
         :meth:`changes` is the iterator for a task that follows every
         reload; this is the single shot, for a task that wants to wait for
-        one and move on. The wait itself happens off the loop with the GIL
-        released, so nothing else on the loop is delayed by it.
+        one and move on.
+
+        Nothing polls and nothing on the loop blocks: the wait is a future
+        that a notifier thread resolves when the engine installs. That
+        thread is shared by every awaiting task on this configuration and
+        exists only while there is one — see :mod:`dynamic_config._notify`.
         """
-        seen = self._core.generation
         loop = asyncio.get_running_loop()
-        deadline = None if timeout is None else loop.time() + timeout
 
-        while True:
-            # Bounded slices rather than one long block: cancelling this
-            # task should be noticed in a quarter second, not at the next
-            # reload — which may never come.
-            slice_timeout = 0.25
+        # Read, register, read again — and the middle step is what makes
+        # the outer two worth doing. An install that lands before the
+        # registration is caught by the second read; one that lands after
+        # it resolves the future. Nothing falls between them, which is the
+        # same argument the engine's own `Changes` future makes.
+        seen = int(self._core.generation)
+        future = self._notifier(loop).wait(loop)
 
-            if deadline is not None:
-                remaining = deadline - loop.time()
+        if int(self._core.generation) > seen:
+            future.cancel()
 
-                if remaining <= 0:
-                    return None
+            return self.try_current()
 
-                slice_timeout = min(slice_timeout, remaining)
+        if timeout is None:
+            wake = await future
+        else:
+            try:
+                wake = await asyncio.wait_for(future, timeout)
+            except asyncio.TimeoutError:
+                return None
 
-            result = await loop.run_in_executor(
-                None, self._core.wait_for_change, seen, slice_timeout
-            )
+        if wake is None:  # released
+            return None
 
-            if result is not None:
-                return result[1]  # type: ignore[no-any-return]
+        return wake[1]  # type: ignore[no-any-return]
 
     async def changes(self) -> AsyncIterator[M]:
         """Yields the installed model, once per wake, from here on.
@@ -848,31 +1176,172 @@ class DynamicConfig(Generic[M]):
         says. `on_reload` runs for every install, if that is what you
         need.
 
-        Runtime-agnostic in the same spirit as the Rust ``changes()``: the
-        wait happens on a worker thread with the GIL released, so any
-        event loop drives it.
-
             async for db in config.changes():
                 pool.resize(db.pool_size)
+
+        Cancelling the loop that drives this is noticed immediately: the
+        iterator is awaiting a future, not a timed wait somebody has to
+        outlast.
         """
-        seen = self._core.generation
         loop = asyncio.get_running_loop()
+        notifier = self._notifier(loop)
+        seen = int(self._core.generation)
 
         while True:
-            # A bounded wait, so cancelling the iterator is noticed within
-            # a quarter second rather than at the next reload — which may
-            # never come.
-            result = await loop.run_in_executor(
-                None, self._core.wait_for_change, seen, 0.25
-            )
+            future = notifier.wait(loop)
+            now = int(self._core.generation)
 
-            if result is None:
+            if now > seen:
+                # Installed while the consumer's body was running, or
+                # between the two lines above. Latest wins, so what it
+                # gets is what is installed — not a replay.
+                future.cancel()
+                seen = now
+                model = self.try_current()
+
+                if model is None:  # released
+                    return
+
+                yield model
                 continue
 
-            seen, model = result
+            wake = await future
+
+            if wake is None:  # released
+                return
+
+            generation, model = wake
+
+            if generation <= seen:
+                # The notifier's answer for an install this iterator has
+                # already reported by reading the generation itself. Both
+                # describe the same wake; one of them is enough.
+                continue
+
+            seen = generation
+
             yield model
 
-    # ── Runtime layers ─────────────────────────────────────────────────
+    async def events(
+        self, failure_poll: float | None = None
+    ) -> AsyncIterator[ConfigEvent]:
+        """Every install *and* every refusal, as typed events.
+
+        :meth:`changes` is the model stream a service loop wants; this is
+        the diagnostic one — what a health endpoint, a metric or a log
+        line is built from::
+
+            async for event in config.events():
+                match event:
+                    case Reloaded(generation=generation, changed=paths):
+                        log.info("config %s: %s", generation, ", ".join(paths))
+                    case ReloadFailed(kind=kind, path=path):
+                        alert(f"configuration refused at {path}: {kind}")
+
+        **No event carries a value.** Paths, kinds, counts and timestamps
+        only — the same rule every other diagnostic here follows, and for
+        the same reason: a value in an event is a secret in a log.
+
+        Parameters:
+            failure_poll: seconds between checks for a *refused* reload,
+                or ``None`` — the default — for installs only.
+
+                An install wakes this stream; a refusal cannot, because
+                the engine bumps no generation for a load that installed
+                nothing, and there is nothing to be notified of. So a
+                stream that wants :class:`ReloadFailed` asks for it, and
+                pays a status read at the interval it names. Nothing is
+                started when it is ``None``: no timer, no thread, no
+                wake-up.
+
+                One second is a reasonable choice for a watcher on a
+                deployment path. The refusal that matters — a watcher
+                reloading a file somebody has just broken — is otherwise
+                invisible here until the next successful install, which
+                in an outage is exactly the thing that is not coming.
+        """
+        loop = asyncio.get_running_loop()
+        notifier = self._notifier(loop)
+        failures = int(self.status().consecutive_failures)
+        seen = int(self._core.generation)
+        # The baseline for `changed`, and local to this stream: two
+        # streams on one configuration each compare against what they
+        # themselves last reported, rather than against each other.
+        previous = self.try_current()
+
+        while True:
+            future = notifier.wait(loop)
+            now = int(self._core.generation)
+
+            if now > seen:
+                future.cancel()
+                wake: Any = (now, self.try_current())
+            elif failure_poll is None:
+                wake = await future
+            else:
+                # One future across every tick, deliberately: a fresh one
+                # per tick would leave the old registered with nobody
+                # awaiting it, and the notifier would resolve a growing
+                # list of futures for one install.
+                while True:
+                    wake = await self._tick(future, failure_poll)
+
+                    if wake is not _TICK:
+                        break
+
+                    status = self.status()
+                    count = int(status.consecutive_failures)
+
+                    if count > failures:
+                        failures = count
+
+                        yield _refusal(status, count)
+
+            if wake is None:  # released
+                return
+
+            generation, model = wake
+
+            if model is None:  # released before the first install
+                return
+
+            if generation <= seen:
+                continue
+
+            seen = generation
+            status = self.status()
+            count = int(status.consecutive_failures)
+
+            if count > failures:
+                # A refusal and then an install, with nothing awake in
+                # between: both happened, so both are reported, refusal
+                # first because that is the order they occurred in.
+                failures = count
+
+                yield _refusal(status, count)
+
+            failures = count
+            before, previous = previous, model
+
+            yield Reloaded(
+                generation=int(status.generation),
+                changed=tuple(change.path for change in changed_paths(before, model))
+                if before is not None
+                else (),
+                reason=str(status.last_reason) if status.last_reason else "manual",
+            )
+
+    @staticmethod
+    async def _tick(future: Any, interval: float) -> Any:
+        """``future``'s result, or :data:`_TICK` if it takes longer.
+
+        ``wait`` rather than ``wait_for``: a timeout must not cancel this
+        future, which stays registered with the notifier and is awaited
+        again on the next turn.
+        """
+        done, _pending = await asyncio.wait({future}, timeout=interval)
+
+        return future.result() if done else _TICK
 
     def set_default(self, path: str, value: Any) -> None:
         """A fallback the program computes and a file need not state.
@@ -1134,3 +1603,181 @@ class DynamicConfig(Generic[M]):
             f"<DynamicConfig {self._model.__name__} key={self.key!r} "
             f"generation={self.generation}>"
         )
+
+
+class _Gate:
+    """Serialises a hook's calls, under one of the backpressure policies.
+
+    The engine calls a hook once per install and waits for it to return.
+    Everything here exists so that "waits for it to return" stays true of
+    a function that hands work away, and so that the work being handed
+    away does not pile up without a rule for what to drop.
+    """
+
+    __slots__ = ("_lock", "_policy", "_queue", "_running", "_start")
+
+    def __init__(self, policy: Backpressure, start: Callable[[Any, Any], None]) -> None:
+        self._policy = policy
+        self._start = start
+        self._lock = threading.Lock()
+        self._running = False
+        self._queue: list[tuple[Any, Any]] = []
+
+    def submit(self, previous: Any, current: Any) -> None:
+        """Starts the hook now, queues the call, or drops it."""
+        if self._policy is Backpressure.EVERY:
+            self._start(previous, current)
+            return
+
+        with self._lock:
+            if self._running and self._policy is Backpressure.LATEST:
+                # One slot, overwritten: a pool being resized to a size
+                # nobody wants any more is work done for nothing.
+                self._queue = [(previous, current)]
+                return
+
+            if self._running and self._policy is Backpressure.SERIAL:
+                self._queue.append((previous, current))
+                return
+
+            self._running = True
+
+        self._start(previous, current)
+
+    def finished(self) -> None:
+        """Called by the runner when a call ends; starts whatever waited."""
+        with self._lock:
+            if not self._queue:
+                self._running = False
+                return
+
+            previous, current = self._queue.pop(0)
+
+        self._start(previous, current)
+
+
+def _report(hook: Callable[..., Any], error: BaseException) -> None:
+    """Reports a hook's exception the way a thread's is reported.
+
+    The engine's rule for an inline hook is that a raising one is
+    reported and the others still run; a hook that runs somewhere else
+    keeps the rule, on the channel that fits where it ran. Nothing here
+    reaches the install: a callback cannot fail a reload.
+    """
+    threading.excepthook(
+        SimpleNamespace(  # type: ignore[arg-type]
+            exc_type=type(error),
+            exc_value=error,
+            exc_traceback=error.__traceback__,
+            thread=threading.current_thread(),
+            hook=getattr(hook, "__name__", repr(hook)),
+        )
+    )
+
+
+def _asyncio_dispatcher(
+    hook: Callable[..., Any], policy: Backpressure
+) -> Callable[[Any, Any], None]:
+    """Schedules `hook` as a task on the loop that registered it.
+
+    The loop is captured at registration rather than looked up at reload:
+    a watcher thread has no running loop of its own, and asking for one
+    there is how an async hook silently never runs.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        raise RuntimeError(
+            "an async hook has to be registered from the loop that should "
+            "run it: there is no running loop here, and a watcher thread "
+            "has none of its own to fall back on"
+        ) from None
+
+    running: list[asyncio.Task[Any]] = []
+
+    async def run(previous: Any, current: Any) -> None:
+        try:
+            await hook(previous, current)
+        except asyncio.CancelledError:
+            # `cancel_previous`: whoever cancelled this has already
+            # started its successor, so this one must not also start it.
+            raise
+        except Exception as error:
+            loop.call_exception_handler(
+                {
+                    "message": (
+                        f"dynamic-config reload hook "
+                        f"{getattr(hook, '__name__', hook)!r} raised"
+                    ),
+                    "exception": error,
+                }
+            )
+
+        gate.finished()
+
+    def start(previous: Any, current: Any) -> None:
+        task = loop.create_task(run(previous, current))
+        running.clear()
+        running.append(task)
+
+    gate = _Gate(policy, start)
+
+    def dispatch(previous: Any, current: Any) -> None:
+        """What the engine calls, on the installing thread. It returns at once."""
+
+        def on_loop() -> None:
+            if policy is Backpressure.CANCEL_PREVIOUS:
+                for task in running:
+                    if not task.done():
+                        task.cancel()
+
+                start(previous, current)
+                return
+
+            gate.submit(previous, current)
+
+        # The hop that keeps a reload cheap: the watcher thread only
+        # queues a callback, and the loop does everything after. A closed
+        # loop raises, and a callback nobody can run is nothing to report.
+        with contextlib.suppress(RuntimeError):  # pragma: no cover
+            loop.call_soon_threadsafe(on_loop)
+
+    return dispatch
+
+
+def _executor_dispatcher(
+    hook: Callable[..., Any], policy: Backpressure, pool: Callable[[], Any]
+) -> Callable[[Any, Any], None]:
+    """Runs `hook` on the configuration executor, off the installing thread.
+
+    ``pool`` is read at every dispatch rather than captured, so a hook
+    registered before :func:`~dynamic_config.configure_executor` still
+    lands in the pool the program eventually chose.
+    """
+
+    def run(previous: Any, current: Any) -> None:
+        try:
+            hook(previous, current)
+        except Exception as error:
+            _report(hook, error)
+
+        gate.finished()
+
+    def start(previous: Any, current: Any) -> None:
+        executor = pool()
+
+        if executor is None:
+            # No configured executor: a thread of its own rather than the
+            # installing one, which is the whole point of this dispatch.
+            threading.Thread(
+                target=run,
+                args=(previous, current),
+                name="dynamic-config-hook",
+                daemon=True,
+            ).start()
+        else:
+            executor.submit(run, previous, current)
+
+    gate = _Gate(policy, start)
+
+    return gate.submit

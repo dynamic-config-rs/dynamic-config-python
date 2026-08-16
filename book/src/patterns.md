@@ -64,18 +64,41 @@ redaction in the cache, in `explain`, and in a scrubbed validation error.
 config.on_reload(lambda previous, current: pool.resize(current.pool.max_size))
 ```
 
-A hook runs **inside** the reload, on the thread that noticed the change —
-often the watcher's, and in an asyncio program that is *not* the event
-loop. Anything that awaits belongs in `changes()` instead:
+By default a hook runs **inside** the reload, on the thread that noticed
+the change — often the watcher's, and in an asyncio program that is *not*
+the event loop. Anything slow, and anything that awaits, should say so:
 
 ```python
 async def follow():
     async for db in config.changes():
         await pool.resize(db.pool.max_size)
+
+@config.on_reload_async                       # or as a hook, on this loop
+async def resize(previous, current):
+    await pool.resize(current.pool.max_size)
 ```
 
-That is the asyncio shape: the iteration happens on the loop, and the
-reload was over before it started.
+Both run on the loop, and in both the reload was over before the work
+started. Which to pick: `changes()` when the work is the service's own
+loop, `on_reload_async` when it belongs next to the thing it rebuilds —
+and `dispatch=Dispatch.EXECUTOR` when the slow work is not async at all.
+
+## One lifecycle for the configurations that share one
+
+```python
+group = ConfigGroup(db, cache, flags)
+
+with group.running():
+    serve()
+```
+
+Five configurations mean five `init()` calls, five watchers and five
+handles to stop in the right order — none of which is application logic.
+When a deployment moves them together, `group.reload_atomic()` is the
+call that refuses to leave two of them new and one of them old.
+
+The group is lifecycle only. `db.current()` is still the read path,
+because nothing should sit between a program and its values.
 
 ## Testing without a filesystem
 

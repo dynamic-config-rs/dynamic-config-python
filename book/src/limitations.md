@@ -152,9 +152,12 @@ answered — *which pool pays for the blocking work*:
 dynamic_config.set_executor(ThreadPoolExecutor(2, thread_name_prefix="config"))
 ```
 
-`refresh_remote_async()` runs the whole fetch on that pool, remote wheel
-or not. With the remote wheel installed, the tokio runtime is what the
-fetch uses once it arrives there; the two are stacked, not competing.
+`refresh_remote_async()` runs a synchronous `fetch()` on that pool,
+remote wheel or not. With the remote wheel installed, the tokio runtime
+is what the fetch uses once it arrives there; the two are stacked, not
+competing. An [`AsyncRemoteSource`](reference.md#asyncremotesource) is
+the exception, and deliberately: its `fetch()` is awaited on the calling
+loop, because an async client belongs to the loop it was built on.
 
 ### Free-threaded CPython is one interpreter and one platform
 
@@ -178,6 +181,35 @@ running, which is an error message rather than a cure. The deadline
 belongs to the client `fetch()` calls — `httpx.get(..., timeout=5)` — and
 `Ctrl-C` still works, because a `KeyboardInterrupt` out of a fetch
 propagates unchanged.
+
+### A refused reload cannot wake anything
+
+The engine bumps a generation when a document *installs*. A load that
+installed nothing does not, so nothing can be notified of it: a waiter
+in `changed_async()` sleeps through a refusal, and `events()` reports
+`ReloadFailed` only when it is given a `failure_poll` interval to check
+the status at.
+
+That is a real gap for one case — a watcher reloading a file somebody has
+just broken, where the next install is exactly the thing that is not
+coming. `failure_poll=1.0` on an `events()` stream costs one status read
+a second and closes it; a health endpoint reading
+`status().consecutive_failures` closes it without any stream at all.
+Closing it properly means a second wake channel in the engine, which is a
+change to `dynamic-config` rather than to the binding.
+
+### A notifier thread outlives its last waiter
+
+The thread that answers `changed_async()` and `changes()` ends at the
+first install that finds nobody waiting. Cancel every waiter on a
+configuration and one thread stays parked on a condition variable until
+that install — no timer, no wake-ups, no CPU, and one thread's worth of
+address space.
+
+Reclaiming it earlier would mean waking the thread on a schedule, which
+is the polling the notifier exists to remove. One parked thread per
+configuration that has *ever* been awaited is the price, and it is paid
+once.
 
 ### Creating configurations in a loop leaks a little
 

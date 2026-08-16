@@ -6,6 +6,13 @@ object with `fetch()` and `describe()` is a remote store here — a
 company's own service, a file a sidecar writes, an API nobody will ever
 write a Rust client for.
 
+This one is synchronous — `httpx.get`, `requests`, a file read — which is
+what `RemoteSource` is for. A store whose client is async is
+`AsyncRemoteSource`, in
+[`25_async_remote_source.py`](25_async_remote_source.py): its `fetch()`
+is awaited on the caller's loop, because an async client belongs to the
+loop it was built on.
+
 python examples/18_python_remote_source.py
 """
 

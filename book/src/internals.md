@@ -98,12 +98,21 @@ init, reload, a watch-driven reload, `replace`, and recovery.
   thread blocked on the mutex is a thread holding the GIL the first one
   needs. The threading suite found exactly that, and the fix was to make
   the engine an `Arc` that callers clone and use outside the lock.
-- **Hooks run on the thread that reloaded.** A raising hook is reported
-  through Python's unraisable channel and the rest still run — the
-  crate's panic-isolation contract in Python's vocabulary.
-- **Waits release the GIL** and are bounded (a quarter second per slice),
-  so cancelling an `async for` is noticed promptly rather than at the
-  next reload.
+- **Hooks run on the thread that reloaded**, unless the registration said
+  otherwise (`dispatch=`). A raising hook is reported — through Python's
+  unraisable channel for one that ran on a thread, through the loop's
+  exception handler for one that ran as a task — and the rest still run,
+  which is the crate's panic-isolation contract in Python's vocabulary.
+  Whatever the dispatch, what the engine calls is a fast synchronous
+  function that hands the work elsewhere and returns: an install never
+  waits for a callback it did not run itself.
+- **A wait releases the GIL and is not bounded.** Since 0.2 one notifier
+  thread per configuration parks in `wait_for_change` with no timeout and
+  resolves every awaiting task's future through
+  `loop.call_soon_threadsafe`. Two things can wake it: an install, or
+  `release()` — which is why the wake structure carries a `closed` flag
+  as well as a generation. Cancelling an `async for` is immediate,
+  because the task drops its future rather than outlasting a slice.
 - **A Python remote source is called straight through**, not handed to a
   worker thread. `refresh_remote()` detaches for the whole refresh and
   the shim re-takes the GIL only to call `fetch()`; the design note that
