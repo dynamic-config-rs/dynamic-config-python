@@ -26,6 +26,8 @@ breaking.
 
 ## [Unreleased]
 
+## 0.2.0 — 2026-08-18
+
 ### Added
 
 - **Nine extras that resolve to the web adapters.**

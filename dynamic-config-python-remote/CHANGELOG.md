@@ -30,6 +30,8 @@ is the door into this one.
 
 ## [Unreleased]
 
+## 0.2.0 — 2026-08-18
+
 ### Changed
 
 - **Moved with the base wheel**, as it always does — the two are built
