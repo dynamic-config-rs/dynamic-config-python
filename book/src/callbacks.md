@@ -186,7 +186,7 @@ exception handler for one that ran as a task — and the hooks after it
 still run. The install
 itself already happened — a hook is a reaction, not a veto. What vetoes
 a bad configuration is validation, which runs
-[before anything installs](introduction.md#where-validation-happens-and-why-it-matters).
+[before anything installs](introduction.md#where-validation-happens).
 
 If you want a hook's failure to be loud, make it loud yourself:
 
