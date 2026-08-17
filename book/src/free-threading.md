@@ -1,10 +1,9 @@
 # Free-Threaded CPython
 
-**The wheel is declared free-threading-safe, and this page is the audit
-behind the declaration** — every `static`, every place correctness rode on
-the GIL, every shared Python object, with what the audit found and what it
-changed. Two of its predictions measured false and two real defects came
-out of it; both are described below.
+**The wheel is declared free-threading-safe.** This is the audit behind
+that declaration: every `static`, every place correctness rode on the GIL,
+and every shared Python object, with what each turned out to be. Two
+defects came out of it, and both are described below.
 
 The declaration is `#[pymodule(gil_used = false)]`, which sets
 `Py_mod_gil = Py_MOD_GIL_NOT_USED` so a free-threaded interpreter does not
@@ -87,7 +86,7 @@ where the GIL is not doing the serialising for it.
 
 ### `Inner::validate` — the staged slot
 
-Last-writer-wins, deliberately. Two concurrent loads can both stage, and
+Last-writer-wins. Two concurrent loads can both stage, and
 the loser's model is dropped rather than published — because both `load()`
 and `commit()` compare the staged **tree** against the one they are acting
 on and re-validate when it does not match. That comparison is what makes
@@ -172,7 +171,7 @@ extension. An earlier version watched for the interpreter's warning
 instead and passed whether or not the declaration was there — the warning
 is emitted once per process at the first import, so reloading the module
 and catching warnings catches nothing. A gate that cannot fail is not a
-gate, which is the whole reason this page exists.
+gate.
 
 ## What this still does not prove
 

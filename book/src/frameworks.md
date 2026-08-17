@@ -9,6 +9,31 @@ The other rule is what *not* to do: do not copy configuration into the
 framework's own settings object at startup. A copy never reloads, and
 that is exactly the thing this library exists to fix.
 
+## Both rules, installed
+
+Everything below is the *hand-written* version, and it is worth reading once
+because it is what the adapters do. But you do not have to write it:
+
+```sh
+pip install "dynamic-config-py[fastapi]"      # or [litestar] [flask] [quart]
+pip install "dynamic-config-py[django]"       # …[drf], [ninja] for its API layers
+pip install "dynamic-config-py[robyn]"        # Experimental
+pip install "dynamic-config-py[django-bolt]"  # Experimental, Python 3.12+
+```
+
+`dynamic-config-py-web` turns both rules into something checked rather than
+recommended — a request scope where a second read is the same object and a
+read outside a request raises, a watcher leased per configuration and
+re-armed after `fork()`, `/healthz` and `/readyz` as the two different
+questions they are, a `/metrics` body, guarded `explain` and `check` routes,
+and the test doors. Nine adapters, one behavioural contract, and its own
+book:
+
+**[dynamic-config-rs.github.io/web/](https://dynamic-config-rs.github.io/web/)**
+
+What follows stays here for the reader who wants to see the seams, and for
+the framework that has no adapter.
+
 ## FastAPI
 
 Configuration is a dependency, which is what makes it testable:
@@ -61,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(lifespan=lifespan)
 ```
 
-Two details, both deliberate.
+Two details worth knowing.
 
 `watch_async` rather than `watch`: the loop starting the app is the loop
 that will answer its requests, and starting a watcher registers
@@ -75,7 +100,7 @@ and returns without joining the thread or draining a debounce window.
 One lifespan rather than a startup handler plus a shutdown handler:
 start and stop are the same function, so the watcher cannot be started
 without being stopped. That matters because a second `watch()` on one
-configuration is `AlreadyExists`, deliberately — two watchers on one
+configuration is `AlreadyExists` — two watchers on one
 file could only mislead — and an app gets instantiated more than once
 (`uvicorn --reload`, a test suite building client after client). Paired
 this way each run stops the last one's watcher before the next starts.
@@ -161,16 +186,7 @@ For a long-running consumer, `async for db in config.changes()` is the
 shape that reacts to a change rather than polling for one — see
 [Async & asyncio](async.md).
 
-## Gunicorn, uWSGI and other pre-forking servers
+## Pre-forking servers
 
-Each worker process gets its own copy of everything, including the
-watcher — which is fine and is what you want: every worker reloads
-independently from the same file. Two cautions:
-
-- Start the watcher **after** the fork (a `post_fork` hook, or a startup
-  handler), never at import time in the master. A watcher thread does not
-  survive `fork()` in the child, and the master's copy would be the only
-  one left running.
-- With `--preload`, the module-level `init()` runs once in the master and
-  the loaded snapshot is inherited by the children, which is a *good*
-  thing: one parse, N workers. The watcher still has to start per worker.
+gunicorn, uWSGI and their kin fork a worker per process, and a watcher is a
+thread. That has its own chapter: [Pre-forking Servers](pre-forking.md).

@@ -11,7 +11,7 @@ def resize(old, new):
     pool.resize(new.pool.max_size)
 ```
 
-That is the whole idea. The rest of this page is what the arguments mean,
+That is the whole idea. The rest is what the arguments mean,
 what a hook may and may not do, and the four other shapes the same thing
 takes.
 
@@ -55,7 +55,7 @@ compares secrets — comparing the mask would make two different passwords
 look equal — and reports paths only, so the line above is safe to log.
 
 A read *inside* a hook sees the new model: this configuration's own
-publish hook is registered first, deliberately, so `config.current()`
+publish hook is registered first, so `config.current()`
 agrees with the `new` argument rather than lagging it by one install.
 `config.generation` is already bumped, too.
 

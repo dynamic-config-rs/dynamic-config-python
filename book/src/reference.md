@@ -95,7 +95,7 @@ Three things a caller has to know, each of which has a test:
   deadline belongs to the client the method calls.
 - **A raising `fetch()` is reported, not fatal.** It arrives as
   `RemoteError` — or `AuthError`, if that is what was raised — with the
-  original attached as `__cause__`. Its *message* is deliberately not
+  original attached as `__cause__`. Its *message* is not
   repeated: a store's exception routinely carries the URL it called. The
   previous document and the previous model both keep serving.
 - **A `fetch()` may read its own configuration** — `current()`,
@@ -172,7 +172,7 @@ overrides beat everything.
 
 These take effect on the next load, so a `set_override` after `init()`
 wants a `reload()` behind it. `overrides(...)` is the exception, and that
-is the whole reason it exists: it reloads on entry and again on exit.
+is what it is for: it reloads on entry and again on exit.
 
 ### Diagnostics
 

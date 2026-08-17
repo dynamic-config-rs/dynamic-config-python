@@ -16,7 +16,7 @@ precise, and it changed once:
   are additions to this package, made after using the 0.1 surface from
   an asyncio service and finding the seams. Additive, so nothing written
   against 0.1 changed meaning — but additions, not hotfixes, and calling
-  them hotfixes would be a lie about what the version means.
+  they are additions rather than hotfixes, and the version says so.
 
 Between 0.2 and 1.0 the intent is the earlier one again: security fixes,
 hotfixes, documentation. If that changes a second time it will be
@@ -100,7 +100,7 @@ alert on. The
 **Give the last-known-good cache a path that survives a restart.** A
 `redacted` cache means a broken source at startup is a warning rather than
 an outage — and it refuses to write at all unless the configuration has
-said what is secret, which is the point.
+said what is secret.
 
 **Watch the watcher.** A file watcher is not a promise that a file will be
 watched: a container bind mount and some network filesystems deliver no

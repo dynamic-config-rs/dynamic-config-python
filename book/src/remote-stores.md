@@ -8,8 +8,8 @@ every wheel for every user, including the ones reading a single TOML file.
 
 > All eight now ship compiled, in an opt-in second wheel:
 > `pip install dynamic-config-py[remote]`. See
-> [Remote Stores in Rust](remote-wheel.md). This page is the other half,
-> and it needs no extra: a store *written in Python* is in the base
+> [Remote Stores in Rust](remote-wheel.md). What follows is the other
+> half, and it needs no extra: a store *written in Python* is in the base
 > wheel, and is the answer for every store that has no Rust client at
 > all — a company's own service, a sidecar, an API nobody will write a
 > client for — and for the capabilities the wheels do not expose, such as
@@ -139,7 +139,7 @@ except RemoteError as failure:
     log.debug("the store said", exc_info=failure.__cause__)
 ```
 
-Two properties are worth stating plainly, because both are enforced by
+Two properties, both enforced by
 tests:
 
 **The exception's message is not repeated.** A store's exception

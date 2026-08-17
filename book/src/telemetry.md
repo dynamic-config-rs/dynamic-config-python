@@ -65,7 +65,7 @@ A failure is kept after a later success, because it is history; the
 
 ### Why there are no timestamps
 
-The engine records *when* with a monotonic clock, deliberately: those
+The engine records *when* with a monotonic clock: those
 numbers are read as **how long ago**, and a wall clock stepping backwards
 under NTP would make a freshly loaded configuration look stale. A
 monotonic instant has no epoch to convert from — not Unix's, and not
@@ -73,7 +73,7 @@ monotonic instant has no epoch to convert from — not Unix's, and not
 origin even inside one process.
 
 So what crosses is elapsed seconds, measured when the status was taken.
-There is deliberately no `loaded_at` and no `datetime`: building one by
+There is no `loaded_at` and no `datetime`: building one by
 subtracting from `time.time()` would claim a precision the engine
 refused to claim, and would be wrong in exactly the case the monotonic
 clock was chosen for. A service that needs a wall-clock timestamp takes

@@ -44,7 +44,7 @@ below listed files, and the runtime layers bracket the rest. The
 [precedence chapter](https://dynamic-config-rs.github.io/sources-and-precedence.html) is the contract for both
 languages.
 
-## Where validation happens, and why it matters
+## Where validation happens
 
 ```text
 reload trigger (watcher / reload() / init())
@@ -89,7 +89,7 @@ Every call that touches the sources has an async twin —
 [API Reference](reference.md) is the full list, with each pair on
 one row.
 
-`current()` has none, deliberately: the model is cached on the
+`current()` has none: the model is cached on the
 configuration object, so reading it is an attribute lookup that needs no
 `await` on a loop and blocks nothing on a thread.
 
@@ -166,7 +166,7 @@ with config.overrides(pool_size=1, host="localhost"):
 Reloaded on entry, and on exit the *previous* override layer is restored
 and reloaded — restored rather than emptied, so a nested `with` composes
 and a pin made before the block still stands after it. The restore runs
-on an exception too, which is the point: the long hand is
+on an exception too: the long hand is
 `set_override`, `reload`, `clear_overrides`, `reload`, and it is the last
 two that get forgotten, after which one test's pin is the next test's
 mystery. Dotted paths are spelled with `__` — `pool__max_size=1` — the
@@ -426,7 +426,7 @@ existing settings class keeps the variable names its deployment already
 sets. [What a schema may be](types.md#what-a-schema-may-be) and
 [pydantic-settings](types.md#pydantic-settings).
 
-## What is not exposed, and why
+## What is not exposed
 
 | Not exposed | Why |
 |---|---|

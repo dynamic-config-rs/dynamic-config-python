@@ -1,10 +1,9 @@
 # Limitations
 
-What the Python bindings deliberately do not do, and why. As with the
-Rust crate's [Limitations](https://dynamic-config-rs.github.io/limitations.html), the list exists so that a
-missing feature reads as a decision rather than an oversight — and so
-that anyone who disagrees can argue with the reason instead of guessing
-at one.
+Behaviour the Python bindings do not provide, what to use instead, and
+what would change each answer. The Rust crate's
+[Limitations](https://dynamic-config-rs.github.io/limitations.html) covers
+the engine's own.
 
 ## Not exposed
 
@@ -156,7 +155,7 @@ dynamic_config.set_executor(ThreadPoolExecutor(2, thread_name_prefix="config"))
 remote wheel or not. With the remote wheel installed, the tokio runtime
 is what the fetch uses once it arrives there; the two are stacked, not
 competing. An [`AsyncRemoteSource`](reference.md#asyncremotesource) is
-the exception, and deliberately: its `fetch()` is awaited on the calling
+the exception: its `fetch()` is awaited on the calling
 loop, because an async client belongs to the loop it was built on.
 
 ### Free-threaded CPython is one interpreter and one platform

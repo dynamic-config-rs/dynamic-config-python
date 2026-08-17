@@ -1,7 +1,7 @@
 # Implementation Details
 
 How the binding is built, for anyone changing it — or deciding whether to
-trust it. This page is what the code does, which is not always what the
+trust it. What follows is what the code does, which is not always what the
 design document that preceded it said; that document has been retired
 now that every decision in it either shipped or was replaced by one
 recorded here.
@@ -29,10 +29,10 @@ recorded here.
 conversion, and the one place Python is entered on a reload.
 **`dynamic_config`** is ordinary Python around it — the generic
 `DynamicConfig`, the decorator, the asyncio bridge, the secret
-derivation. That split is deliberate: typing, introspection and event
+That split holds because typing, introspection and event
 loops are all clearer in Python, and none of them is on the read path.
 
-## Where validation happens, and why it is there
+## Where validation happens
 
 The binding registers Pydantic validation as the engine's own `validate`
 hook, which the loader calls **after deserializing and before installing
@@ -59,7 +59,7 @@ paths arrive at that publish:
 1. the engine's own `on_reload` hook, which fires for every install after
    the first;
 2. the explicit call after `init()` or `reload()` returns, which is what
-   covers the first install (the engine skips hooks there, deliberately —
+   covers the first install (the engine skips hooks there —
    installing is not reloading).
 
 Both call the same `commit`, and both can arrive for one install. A
@@ -164,7 +164,7 @@ paths — and seeds the same secret list the generated Rust `builder()`
 seeds. The names used are the ones a *file* could carry — **all** of
 them: the field name and every alias Pydantic accepts, whether that is a
 plain string, an `AliasPath`, an `AliasChoices` of either, or one an
-`alias_generator` wrote. Deliberately generous, because the two errors
+`alias_generator` wrote. Generous, because the two errors
 are not symmetrical: listing a name nothing supplies costs a key that
 never appears, and missing one puts a password in `explain` and in the
 "redacted" cache on disk. That was not hypothetical — the earlier rule
@@ -203,7 +203,7 @@ there the caller is *supplying* the value.
 ## What the wheel contains
 
 `cdylib` + PyO3 `abi3-py39`: one wheel per platform covers every
-supported interpreter. The remote store crates are deliberately absent —
+supported interpreter. The remote store crates are absent —
 their clients would multiply the build matrix and ride into every wheel.
 That is also why the wheel carries no tokio: the Rust `tokio` feature
 routes the crate's *own* async loads into tokio's blocking pool, and this

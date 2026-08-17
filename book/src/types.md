@@ -118,7 +118,7 @@ diagnostics — is identical across all of them. What differs is what
 
 The base install has no dependencies at all; each extra buys one more
 kind of schema and nothing else. `[all]` is the Pydantic pair —
-deliberately *not* msgspec, which is a different validation engine rather
+*not* msgspec, which is a different validation engine rather
 than an addition to that one.
 
 ### `Values`: a configuration with no schema
@@ -204,7 +204,7 @@ What the adapter checks:
 - each value against its **declared type**, with `bool` and `int` kept
   apart in both directions, and `int` widening to `float` but not back.
 
-What it does *not* do is coerce, with three deliberate exceptions where
+What it does *not* do is coerce, with three exceptions where
 the type parses its own text: an `Enum` takes its member's value,
 `date`/`time`/`datetime` go through `fromisoformat`, and a type that
 builds from a single argument is built from it (`UUID`, `Path`,
@@ -253,7 +253,7 @@ nothing is invented here: it drives the same redaction the other two
 declarations do — the cache drops the path, `explain` renders it `***` —
 and `DynamicConfig(Model, key=…, secrets=[…])` still adds to it.
 
-The empty `errors` is a decision rather than an oversight. msgspec's
+The empty `errors` is not an omission. msgspec's
 `ValidationError` carries a message and no structured report, and
 parsing that message into a report-shaped object would be inventing
 structure the library never promised. The attribute is *present* and

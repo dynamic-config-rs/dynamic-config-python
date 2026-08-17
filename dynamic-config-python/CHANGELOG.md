@@ -28,6 +28,20 @@ breaking.
 
 ### Added
 
+- **Nine extras that resolve to the web adapters.**
+  `dynamic-config-py[fastapi]`, `[litestar]`, `[flask]`, `[quart]`,
+  `[django]`, `[drf]`, `[ninja]`, `[robyn]` and `[django-bolt]` — plus
+  `[web]` for the shared core with no framework — each resolving to
+  [`dynamic-config-py-web`](https://github.com/dynamic-config-rs/dynamic-config-python-web),
+  which is where the wiring, the request scope, the health surface and the
+  test doors now live. Not in `[all]`, exactly as `[remote]` is not:
+  `[all]` means the schema libraries.
+
+  The book's *Web Frameworks* page keeps the two rules and the hand-written
+  version — the adapters are what those rules look like when they are
+  checked rather than recommended — and points at that package's book for
+  the installed one.
+
 - **`ConfigGroup`: several configurations under one lifecycle.**
   `ConfigGroup(db, cache, queue)` initialises, watches, reports and stops
   its members together, with async twins throughout and `concurrency=` to
@@ -90,6 +104,10 @@ breaking.
   `ClassVar` Pydantic needs is still what Pydantic sees.
 
 ### Changed
+
+- **The book has parts** — *Guide*, *Use Cases*, *Advanced* and *Reference*
+  — and pre-forking servers move out of the bottom of *Web Frameworks* into
+  a chapter of their own.
 
 - **Awaiting a reload no longer polls.** `changed_async()`, `changes()`
   and `events()` are answered by one notifier thread per configuration —
