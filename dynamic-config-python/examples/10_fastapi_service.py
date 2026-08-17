@@ -12,9 +12,10 @@ The rule that matters is the second line of every handler: **read once,
 then use that value for the whole request.** A reload landing halfway
 through would otherwise show one request two configurations.
 
-The watcher belongs to the app's lifespan, and starts with
-`watch_async`: the loop that starts a service is the loop that will
-answer its requests, and registration is syscalls it should not wait on.
+Loading and watching belong to the app's lifespan, and
+`config.running_async()` is exactly that block: load, watch, serve, stop.
+The loop that starts a service is the loop that will answer its requests,
+and neither the load nor the registration is something it should wait on.
 """
 
 from __future__ import annotations
@@ -35,42 +36,38 @@ except ImportError:  # pragma: no cover - the example says how to fix it
 
 def build(path: Path) -> tuple[FastAPI, DynamicConfig[Database], object]:
     config = DynamicConfig(Database, key="db").file(str(path)).env("APP_")
-    config.init()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Starts the watcher when the app starts, stops it when it stops.
+        """Loads, watches, serves, stops — the app's whole lifetime.
 
-        A lifespan rather than `on_event("startup")`: startup and
-        shutdown are one function, so the watcher cannot be started
-        without also being stopped, and there is no second handler to
-        keep in step. It is also the API FastAPI still recommends.
+        `running_async()` is the three of those as one block, which is
+        what a lifespan already is: startup and shutdown in one function,
+        so the watcher cannot be started without also being stopped and
+        there is no second handler to keep in step.
 
-        `await config.watch_async(...)` rather than `config.watch(...)`.
-        Starting a watcher is short but not free: it resolves the
-        directories to observe, registers each with the platform's
-        notification backend and spawns the thread that carries events —
-        syscalls the calling thread waits out. Native registration is a
-        fraction of a millisecond; polling first scans everything it
-        watches, which is milliseconds over a large directory and worse
-        over a network filesystem. This runs once, so either call would
-        survive review, but the loop here is the one that will answer
-        requests and the async form costs nothing to prefer.
+        It loads with `init_async` and starts the watcher with
+        `watch_async`, both for the same reason: the loop that starts a
+        service is the loop that will answer its requests, and neither
+        call should be the thing it waits on. Starting a watcher is short
+        but not free — it resolves the directories to observe, registers
+        each with the platform's notification backend and spawns the
+        thread that carries events. Native registration is a fraction of
+        a millisecond; polling first scans everything it watches, which
+        is milliseconds over a large directory and worse over a network
+        filesystem.
+
+        Stopping needs no await, even here: it drops the backend and
+        returns without joining the watcher thread or waiting out a
+        debounce window, so there is nothing to hand off.
 
         Here rather than at import: importing a module should not begin
         filesystem work. And one watcher per app — a second `watch()` on
         one configuration is `AlreadyExists`, deliberately, because two
         watchers on one file could only mislead.
         """
-        watch = await config.watch_async(debounce=0.25)
-
-        try:
+        async with config.running_async(debounce=0.25):
             yield
-        finally:
-            # `stop()` is sync on purpose, even here: it drops the backend
-            # and returns without joining the watcher thread or waiting
-            # out a debounce window, so there is nothing to hand off.
-            watch.stop()
 
     application = FastAPI(lifespan=lifespan)
 

@@ -26,6 +26,110 @@ breaking.
 
 ## [Unreleased]
 
+## 0.2.0 — 2026-08-18
+
+### Added
+
+- **Nine extras that resolve to the web adapters.**
+  `dynamic-config-py[fastapi]`, `[litestar]`, `[flask]`, `[quart]`,
+  `[django]`, `[drf]`, `[ninja]`, `[robyn]` and `[django-bolt]` — plus
+  `[web]` for the shared core with no framework — each resolving to
+  [`dynamic-config-py-web`](https://github.com/dynamic-config-rs/dynamic-config-python-web),
+  which is where the wiring, the request scope, the health surface and the
+  test doors now live. Not in `[all]`, exactly as `[remote]` is not:
+  `[all]` means the schema libraries.
+
+  The book's *Web Frameworks* page keeps the two rules and the hand-written
+  version — the adapters are what those rules look like when they are
+  checked rather than recommended — and points at that package's book for
+  the installed one.
+
+- **`ConfigGroup`: several configurations under one lifecycle.**
+  `ConfigGroup(db, cache, queue)` initialises, watches, reports and stops
+  its members together, with async twins throughout and `concurrency=` to
+  bound how many load at once. `group.status()` and `group.generations()`
+  answer per key, for a health endpoint. The group owns lifecycle, not
+  storage: `db.current()` is still the read path.
+
+- **`group.reload_atomic()`: every member validates, or none installs.**
+  The engine's prepare-then-commit — `ReloadGroup`, which Rust callers
+  have had since 0.4 — driven from Python. A refusal leaves every
+  snapshot exactly as it was, generation included, instead of leaving a
+  deployment half-applied across two configurations.
+
+- **`events()`: installs and refusals as typed events.** An async
+  iterator of `Reloaded(generation, at, changed, reason)` and
+  `ReloadFailed(generation, at, kind, path, consecutive)` — frozen
+  dataclasses a `match` reads as prose. **No event carries a value**, the
+  same rule `explain()` and `check()` follow. `failure_poll=` opts into
+  checking for refusals, which nothing can wake a stream for: the engine
+  bumps no generation for a load that installed nothing.
+
+- **Reload hooks can say where they run.** `on_reload(hook,
+  dispatch=..., backpressure=...)`, plus `on_reload_async` and
+  `on_change_async` for coroutine functions. `Dispatch` is `inline`
+  (the default, unchanged), `executor` or `asyncio`; `Backpressure` is
+  `every`, `latest` (the default off the installing thread), `serial` or
+  `cancel_previous`. Both are `str` enums, so `dispatch="executor"` works
+  and a typo is a `ValueError` at registration rather than a callback
+  that silently never runs. A coroutine function registered with no
+  `dispatch` now runs as a task instead of being called inline and
+  returning a coroutine nobody awaits.
+
+- **`AsyncRemoteSource`: a remote store whose client is async.** Its
+  `fetch()` is awaited on the loop that called `refresh_remote_async()`,
+  so an `httpx.AsyncClient` runs on the loop it was built on; cancelling
+  the refresh cancels the fetch, and a raising `fetch()` reaches the
+  caller as its own exception rather than as `RemoteError`. The
+  synchronous `refresh_remote()` raises on such a store rather than
+  driving it from a private loop.
+
+- **The lifetime as a block.** `with config.running():` is init, then
+  watch, then stop; `config.watching()`, `group.watching()`,
+  `group.running()` and the `_async` twin of each do the same for the
+  pieces. The shape that cannot leak a watcher by forgetting to stop it.
+
+- **`configure_executor(workers)` and `executor(...)`.**
+  `configure_executor` builds the blocking pool, names its threads
+  `dynamic-config-blocking-N` and shuts it down at exit; `executor()` is
+  the same choice as a block, restored on the way out. `set_executor` is
+  unchanged, and the pool passed to it is still never shut down here.
+
+- **`Model.config` keeps the model's type.** A configuration reached
+  through the decorator was `DynamicConfig[Any]`, so everything reached
+  through *it* — `Model.config.current()`, `changes()`,
+  `changed_async()` — came back as `Any` under `mypy --strict` while
+  `Model.current()` was correctly typed. `Configured` now declares it as
+  a descriptor generic over the class it is read from, which is how
+  `classmethod` itself is typed, so `Database.config` is
+  `DynamicConfig[Database]`. Runtime behaviour is unchanged, and the
+  `ClassVar` Pydantic needs is still what Pydantic sees.
+
+### Changed
+
+- **The book has parts** — *Guide*, *Use Cases*, *Advanced* and *Reference*
+  — and pre-forking servers move out of the bottom of *Web Frameworks* into
+  a chapter of their own.
+
+- **Awaiting a reload no longer polls.** `changed_async()`, `changes()`
+  and `events()` are answered by one notifier thread per configuration —
+  shared by every awaiting task on it, parked in the engine with the GIL
+  released, and woken only by an install or by release. Before this, each
+  waiter re-submitted a quarter-second wait to an executor for as long as
+  it waited.
+
+  What changes for callers: **cancellation is immediate** rather than
+  within 250 ms; an idle service does no work at all for the
+  configuration it is watching; and the executor is free for loads, so a
+  hundred awaiting tasks no longer contend with the reload they are
+  waiting for. `set_executor` still answers the same question it did.
+
+- **Watcher-side threads are named.** A notifier thread is
+  `dynamic-config-notify-<key>` and a dispatched hook's thread is
+  `dynamic-config-hook`, so a thread dump says which configuration it is
+  looking at.
+
+
 ## 0.1.3 — 2026-08-16
 
 ### Changed

@@ -30,6 +30,8 @@ from __future__ import annotations
 import abc
 import enum
 
+__all__ = ["AsyncRemoteSource", "Format", "RemoteSource"]
+
 
 class Format(str, enum.Enum):
     """The format a fetched document is written in.
@@ -106,3 +108,99 @@ class RemoteSource(abc.ABC):
         than the credential that reaches it.
         """
         raise NotImplementedError
+
+
+class AsyncRemoteSource(abc.ABC):
+    """A remote store whose ``fetch`` is a coroutine.
+
+    Everything a modern Python service talks to has an async client, and
+    :class:`RemoteSource` cannot hold one: the engine calls ``fetch()``
+    from a worker thread, and a coroutine returned there is an object
+    nobody awaits.
+
+    So this is the other door::
+
+        class OurService(AsyncRemoteSource):
+            async def fetch(self):
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(URL, timeout=5)
+                    response.raise_for_status()
+                    return response.text, Format.JSON
+
+            def describe(self):
+                return "our service"
+
+        config = DynamicConfig(Database, key="db").remote(OurService())
+        await config.refresh_remote_async()
+
+    ``refresh_remote_async()`` awaits ``fetch()`` on the loop that called
+    it, and only then hands the document to the engine — so the client
+    runs where its own loop is, which is the only place it can run.
+
+    The synchronous :meth:`~dynamic_config.DynamicConfig.refresh_remote`
+    raises on a configuration whose store is one of these. It is not a
+    limitation worth hiding behind a private event loop: an async client
+    built on one loop and driven from another is a class of bug that
+    surfaces days later, as a hang.
+
+    ``describe()`` stays synchronous — it names the store, and naming
+    something needs no network.
+    """
+
+    __slots__ = ()
+
+    @abc.abstractmethod
+    async def fetch(self) -> tuple[str, Format]:
+        """Reads the store, and answers ``(document, format)``.
+
+        Awaited on the caller's loop. The deadline is yours, as it is for
+        :meth:`RemoteSource.fetch` — with the difference that here you
+        also have :func:`asyncio.wait_for`, and a task that is cancelled
+        cancels this.
+
+        Raise to report a failure: :class:`AuthError` for a refused
+        credential, anything else for a store that could not be read.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def describe(self) -> str:
+        """Names this store, for provenance and for error messages."""
+        raise NotImplementedError
+
+
+class _AwaitedDocument(RemoteSource):
+    """Hands one already-awaited document to the engine, once.
+
+    The engine's refresh calls ``fetch()`` on a worker thread; an
+    :class:`AsyncRemoteSource` has by then already been awaited on the
+    loop, and this carries the result across. Outside that hand-off it
+    raises, which is what makes a synchronous ``refresh_remote()`` on an
+    async store an error with an answer in it rather than a coroutine
+    warning.
+    """
+
+    __slots__ = ("_document", "source")
+
+    def __init__(self, source: AsyncRemoteSource) -> None:
+        self.source = source
+        self._document: tuple[str, Format] | None = None
+
+    def hand_over(self, document: tuple[str, Format]) -> None:
+        self._document = document
+
+    def fetch(self) -> tuple[str, Format]:
+        document, self._document = self._document, None
+
+        if document is None:
+            raise RuntimeError(
+                f"{type(self.source).__name__} is an AsyncRemoteSource: its "
+                "fetch() is a coroutine, so call `await "
+                "config.refresh_remote_async()` rather than "
+                "`config.refresh_remote()`"
+            )
+
+        return document
+
+    def describe(self) -> str:
+        return self.source.describe()

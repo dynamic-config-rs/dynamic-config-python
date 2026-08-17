@@ -29,7 +29,54 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # What changed, so the expensive jobs below can sit out a run that cannot
+  # affect them. Deliberately a *job* rather than `on.pull_request.paths`:
+  # a workflow filtered out at the trigger never reports at all, and a
+  # required check that never reports leaves the pull request waiting for
+  # ever. A skipped job passes the gate instead — `ci-ok` matches `failure`
+  # and `cancelled` only, which the `supply-chain` job in security.yml has
+  # relied on since it was written.
+  # Filtering applies to pull requests only. A push to `main` and a manual
+  # dispatch run everything: `main` is what releases from, and a manual
+  # dispatch has no base commit for a path filter to compare against.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
+      python: ${{ steps.filter.outputs.python }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rustfmt.toml'
+              - 'deny.toml'
+              - '.cargo/**'
+              - '.github/workflows/**'
+            python:
+              - '**/*.rs'
+              - '**/*.py'
+              - '**/*.pyi'
+              - '**/pyproject.toml'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/**'
+            docs:
+              - '**/*.md'
+              - 'book/**'
+              - '.github/workflows/**'
+
   fmt:
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # A hung job should fail, not sit on a runner for six hours.
     timeout-minutes: 10
@@ -42,6 +89,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # A hung job should fail, not sit on a runner for six hours.
     timeout-minutes: 30
@@ -61,6 +110,8 @@ jobs:
       - run: cargo clippy -p dynamic-config-python --lib --all-features
       - run: cargo clippy -p dynamic-config-python-remote --lib --all-features
   python:
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true' || github.event_name != 'pull_request'
     name: the Python bindings
     runs-on: ubuntu-latest
     # A hung job should fail, not sit on a runner for six hours.
@@ -85,6 +136,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          # No requirements.txt in this repository; without a path to
+          # hash, setup-python fails the step rather than skipping the cache.
+          cache-dependency-path: "**/pyproject.toml"
       # The framework packages are here for the three integration
       # examples: an example that only compiles is not an example.
       # msgspec is here and *not* in the free-threaded job below: it
@@ -137,6 +192,8 @@ jobs:
           done
 
   python-remote:
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true' || github.event_name != 'pull_request'
     name: the remote wheel
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -156,6 +213,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          # No requirements.txt in this repository; without a path to
+          # hash, setup-python fails the step rather than skipping the cache.
+          cache-dependency-path: "**/pyproject.toml"
       # The two wheels version independently of the workspace but not of
       # each other: the extra `dynamic-config-py[remote]` resolves to a
       # distribution that requires the base one, so a hand edit that moves
@@ -223,6 +284,8 @@ jobs:
           "
 
   python-free-threaded:
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true' || github.event_name != 'pull_request'
     name: the Python bindings, without a GIL
     runs-on: ubuntu-latest
     # Ten repeats of the concurrency suite on top of the whole suite; a hung
@@ -240,6 +303,10 @@ jobs:
           # which declared free-threading supported rather than experimental in
           # 3.14. A 3.13t row here would not build.
           python-version: "3.14t"
+          cache: pip
+          # No requirements.txt in this repository; without a path to
+          # hash, setup-python fails the step rather than skipping the cache.
+          cache-dependency-path: "**/pyproject.toml"
       # A `t` interpreter that turned its GIL back on for some unrelated reason
       # would make every assertion below pass for the wrong reason. Check the
       # premise before relying on it.
@@ -301,6 +368,8 @@ jobs:
           done
 
   docs-links:
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true' || github.event_name != 'pull_request'
     name: documentation links resolve
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -342,6 +411,7 @@ jobs:
   ci-ok:
     name: CI is green
     needs:
+      - changes
       - fmt
       - clippy
       - python

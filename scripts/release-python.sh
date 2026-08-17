@@ -2,7 +2,7 @@
 # The Python packages' release, which is not the workspace's.
 #
 #   scripts/release-python.sh patch|minor|major|<version>   # prepare
-#   scripts/release-python.sh --check                       # would it work?
+#   scripts/release-python.sh --check patch|minor|<version> # would it work?
 #   scripts/release-python.sh --publish                     # after it lands
 #   scripts/release-python.sh --status                      # what is where
 #
@@ -83,7 +83,10 @@ status() {
     echo "  ${base_pypi}          $(current)   (${base_manifest})"
     echo "  ${remote_pypi}   $(version_of "${remote_manifest}")   (${remote_manifest})"
     echo "  the remote wheel requires ${base_pypi}>=$(declared_floor)"
-    echo "engine:   dynamic-config $(awk '/^\[workspace.package\]/ { p = 1; next } /^\[/ { p = 0 } p && /^version = / { gsub(/[",]/, "", $3); print $3; exit }' Cargo.toml)"
+    # The engine is a *dependency* here, not a member: this workspace
+    # publishes wheels and `[workspace.package]` carries no version at all,
+    # which is why reading one printed an empty string.
+    echo "engine:   dynamic-config $(awk -F\" '/^\[workspace.dependencies\]/ { p = 1; next } /^\[/ { p = 0 } p && /^dynamic-config = .*version = / { print $2; exit }' Cargo.toml)"
     echo
 
     echo "changelogs:"
@@ -307,7 +310,23 @@ PY
 
 case "${1:---status}" in
     --status) status ;;
-    --check) check ;;
+    --check)
+        # With a target, because the useful question is *would the next one
+        # work* — and the version this repository is on has, by definition,
+        # already been released. Bare `--check` answers about that one and
+        # therefore always reports it as taken; `--check minor` answers
+        # about the release being planned. `prepare` runs the same check on
+        # the same target before it changes a file.
+        case "${2:-}" in
+            "") check ;;
+            major | minor | patch) check "$(bumped "$(current)" "$2")" ;;
+            [0-9]*.[0-9]*.[0-9]*) check "$2" ;;
+            *)
+                echo "usage: $0 --check [patch|minor|major|<version>]" >&2
+                exit 2
+                ;;
+        esac
+        ;;
     --publish) publish ;;
     -h | --help)
         sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'

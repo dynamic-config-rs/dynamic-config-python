@@ -30,6 +30,22 @@ is the door into this one.
 
 ## [Unreleased]
 
+## 0.2.0 — 2026-08-18
+
+### Changed
+
+- **Moved with the base wheel**, as it always does — the two are built
+  from one commit and `dynamic-config-py[remote]` resolves to a pair.
+  Nothing in this distribution changed; the compiled stores are the same
+  eight, with the same API.
+
+  What the base wheel's 0.2 adds is available to them like any other
+  `RemoteSource`: `Etcd(...)` or `Vault(...)` can be a member of a
+  `ConfigGroup`, and `events()` reports its installs and refusals.
+  `AsyncRemoteSource` is for a store written in Python — these are
+  compiled, and their `fetch()` stays synchronous, driven by the tokio
+  runtime this wheel owns.
+
 ## 0.1.3 — 2026-08-16
 
 ### Changed

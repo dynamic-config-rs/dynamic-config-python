@@ -13,7 +13,7 @@ name = "dynamic-config-python"
 # So this moves when *this* changes — a new Python API, a behaviour
 # change, or an engine bump worth shipping — and `maturin upload
 # --skip-existing` makes a release that changed nothing here a no-op.
-version = "0.1.3"
+version = "0.2.0"
 edition.workspace = true
 # Its own floor, not the workspace's 1.71: PyO3 needs more than the core does.
 rust-version = "1.85"

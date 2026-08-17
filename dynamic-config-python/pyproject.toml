@@ -96,6 +96,32 @@ all = ["pydantic>=2.0", "pydantic-settings>=2.0"]
 # hundred kilobytes of pure Python, and this adds a gRPC stack. Somebody
 # typing `[all]` to get Pydantic should not get that as well.
 remote = ["dynamic-config-py-remote"]
+# The web-framework adapters, as a third *distribution* —
+# `dynamic-config-py-web` — for the same reason `remote` is a wheel: pip
+# installs distributions, and an extra is the only spelling a caller should
+# have to type. `dynamic-config-py[fastapi]` resolves to
+# `dynamic-config-py-web[fastapi]`, which resolves to FastAPI.
+#
+# Deliberately **not** in `all`, exactly as `remote` is not: `[all]` means
+# the schema libraries, and somebody typing it to get Pydantic should not
+# also get a web framework.
+#
+# No version floors here. Each of these is a *name*, and the floors that
+# matter — which FastAPI, which Django — live once, in that distribution's
+# own `pyproject.toml`, next to the adapter that needs them.
+fastapi = ["dynamic-config-py-web[fastapi]"]
+litestar = ["dynamic-config-py-web[litestar]"]
+flask = ["dynamic-config-py-web[flask]"]
+quart = ["dynamic-config-py-web[quart]"]
+django = ["dynamic-config-py-web[django]"]
+drf = ["dynamic-config-py-web[drf]"]
+ninja = ["dynamic-config-py-web[ninja]"]
+robyn = ["dynamic-config-py-web[robyn]"]
+django-bolt = ["dynamic-config-py-web[django-bolt]"]
+# The adapters with no framework, for a project that wants the shared core —
+# `Wiring`, the request scope, `readiness`, `metrics_body` — over a framework
+# this organisation does not ship an adapter for.
+web = ["dynamic-config-py-web"]
 test = ["pytest>=7", "pytest-asyncio>=0.23"]
 # Everything needed to reproduce the gate `just python` runs.
 dev = [

@@ -7,18 +7,23 @@ reload is *useful* is what happens next: a pool that has to be resized, a
 client that has to be rebuilt, an audit line somebody will read at three
 in the morning.
 
-Five shapes, in the order you tend to need them:
+Six shapes, in the order you tend to need them:
 
     config.on_reload(hook)              every install
     @config.on_reload                   the same, as a decorator
     @config.on_change("pool.max_size")  only when that path moved
     with config.on_reload(hook):        registered for a scope
+    config.on_reload(hook, dispatch=…)  somewhere other than this thread
     async for model in config.changes() no callback at all
 
 The rule underneath all of them: **compare, then signal the thing that
-owns the resource.** A hook runs on whichever thread reloaded, so it is
-not the place to rebuild a connection pool — it is the place to tell the
-pool to rebuild itself.
+owns the resource.** By default a hook runs on whichever thread reloaded,
+so it is not the place to rebuild a connection pool — it is the place to
+tell the pool to rebuild itself, or to say `dispatch=` and have the
+rebuild happen somewhere the reload is not waiting.
+
+[`24_async_callbacks.py`](24_async_callbacks.py) is the async half in
+full: every backpressure policy, and what each one drops.
 """
 
 from __future__ import annotations
@@ -29,12 +34,13 @@ import queue
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from _shared import show
-from dynamic_config import DynamicConfig, changed_paths
+from dynamic_config import Dispatch, DynamicConfig, changed_paths
 
 # To stdout, so the hook output interleaves with the narration in the
 # order it actually happened rather than arriving in a block at the end.
@@ -179,8 +185,36 @@ def main() -> None:
         done.wait(timeout=5)
         thread.join(timeout=5)
 
-        # ── 5. No callback at all ───────────────────────────────────────
-        show("5. on an event loop, a callback is optional")
+        # ── 5. Or say where it should run, and let go of the queue ──────
+        #
+        # The hand-off above is what `dispatch=` does for you when the
+        # destination is "not the installing thread". The queue is still
+        # the answer when the destination is a thread of your own that is
+        # already running; this is the answer when it is not.
+        show("5. dispatch: the same hand-off, as a parameter")
+        finished = threading.Event()
+
+        def rebuild_slowly(_old: Service | None, new: Service) -> None:
+            """Blocking work, and not on the thread that installed."""
+            time.sleep(0.1)
+            log.info(
+                "rebuilt on %s for %s",
+                threading.current_thread().name,
+                new.host,
+            )
+            finished.set()
+
+        with config.on_reload(rebuild_slowly, dispatch=Dispatch.EXECUTOR):
+            write(path, host="db.fifth", port=9090, max_size=32)
+            started = time.perf_counter()
+            config.reload()
+            elapsed = (time.perf_counter() - started) * 1000
+
+            print(f"  reload returned in {elapsed:.0f} ms, hook still running")
+            finished.wait(timeout=5)
+
+        # ── 6. No callback at all ───────────────────────────────────────
+        show("6. on an event loop, a callback is optional")
         asyncio.run(follow(config, path))
 
         show("what the hooks left behind")
@@ -188,7 +222,7 @@ def main() -> None:
         print(f"  pool rebuilds {pool.rebuilds}   (reconnect, on host/port)")
         print(f"  generation    {config.generation}")
         print(
-            "  more rebuilds than section 2 showed: sections 3 to 5 each moved\n"
+            "  more rebuilds than section 2 showed: sections 3 to 6 each moved\n"
             "  the host, and a filter that fires when its path moves is a filter\n"
             "  doing its job"
         )

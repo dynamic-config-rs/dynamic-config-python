@@ -39,7 +39,7 @@ use handles::changes_as_pairs;
 use inner::{Engine, Inner, Layers, Shared, Wake};
 use scrub::{describe, scrub_validation, scrubbed_reports};
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
@@ -171,6 +171,8 @@ impl Config {
 
         Ok(Self {
             inner: Arc::new(Inner {
+                prepared: Mutex::new(std::collections::HashMap::new()),
+                next_prepared: AtomicU64::new(1),
                 key: key.to_owned(),
                 last_committed: AtomicU64::new(0),
                 shared,
@@ -179,6 +181,7 @@ impl Config {
                 wake: Wake {
                     generation: Mutex::new(0),
                     changed: Condvar::new(),
+                    closed: AtomicBool::new(false),
                 },
                 hooks: Mutex::new(Vec::new()),
                 next_hook: AtomicU64::new(1),
@@ -552,6 +555,77 @@ impl Config {
         }
     }
 
+    /// The first half of an all-or-nothing reload: `prepare()`.
+    ///
+    /// Loads and validates now, installs nothing, and answers a token the
+    /// caller hands back to `commit`. Every configuration in a group
+    /// prepares before any of them commits, so a member that refuses
+    /// leaves every other member's snapshot untouched — the property
+    /// `ConfigGroup.reload_atomic` is named for.
+    ///
+    /// A prepared commit that is never committed is dropped, and dropping
+    /// one is exactly what *not* applying it means.
+    fn prepare(&self, py: Python<'_>) -> PyResult<u64> {
+        let inner = Arc::clone(&self.inner);
+        let dynamic = self.inner.dynamic(py, &inner)?;
+        let outcome = py.detach(|| dynamic.builder().prepare());
+
+        match outcome {
+            Ok(commit) => {
+                let token = self.inner.next_prepared.fetch_add(1, Ordering::Relaxed);
+
+                self.inner
+                    .prepared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(token, commit);
+
+                Ok(token)
+            }
+            Err(error) => Err(self.raise(py, &error)),
+        }
+    }
+
+    /// The second half: `commit(token)`.
+    ///
+    /// Installs what `prepare` validated — through the engine, so the
+    /// generation, the reason and the hooks all move exactly as a reload
+    /// moves them. An unknown token is a caller error rather than a
+    /// silent no-op.
+    fn commit(&self, py: Python<'_>, token: u64) -> PyResult<()> {
+        let commit = self
+            .inner
+            .prepared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&token);
+
+        let Some(commit) = commit else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "no prepared commit for this token: it was already \
+                 committed, or it belongs to another configuration",
+            ));
+        };
+
+        py.detach(commit);
+
+        self.publish_current(py)
+    }
+
+    /// Drops a prepared commit without installing it: `discard(token)`.
+    ///
+    /// What a group does to every member's commit when one member
+    /// refuses. Unknown tokens are ignored, because the caller's intent —
+    /// *this must not install* — is already true.
+    fn discard(&self, token: u64) {
+        let _ = self
+            .inner
+            .prepared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&token);
+    }
+
     /// The installed model, or `None` before the first successful load.
     /// The model in force, or `None` before the first install. No
     /// parameters.
@@ -728,19 +802,26 @@ impl Config {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
+            // `closed` is checked with the lock held and again after every
+            // wake: `release` sets it and then notifies, so a waiter that
+            // slept through the flag being set still sees it here.
+            let closed = || self.inner.wake.closed.load(Ordering::Acquire);
+
             match timeout {
                 Some(limit) => {
                     let (guard, _timed_out) = self
                         .inner
                         .wake
                         .changed
-                        .wait_timeout_while(generation, limit, |current| *current <= seen)
+                        .wait_timeout_while(generation, limit, |current| {
+                            *current <= seen && !closed()
+                        })
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                     *guard
                 }
                 None => {
-                    while *generation <= seen {
+                    while *generation <= seen && !closed() {
                         generation = self
                             .inner
                             .wake
@@ -1127,12 +1208,27 @@ impl Config {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        // A commit that was prepared and never applied holds a validated
+        // tree. Nothing can apply it now, so it is dropped here with
+        // everything else this configuration was holding.
+        self.inner
+            .prepared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         // A Python remote source outliving finalization is the same crash
         // class a watcher thread is: the shim the engine holds is reached
         // from a leaked `static`, and dropping the object here is what
         // makes a late fetch answer "released" instead of calling into a
         // Python that is no longer there.
         self.inner.source.clear();
+
+        // Every waiter ends here, and this is the only wake that is not an
+        // install: a configuration nobody reloads again would otherwise
+        // hold its notifier thread until the process exits.
+        self.inner.wake.closed.store(true, Ordering::Release);
+        self.inner.wake.changed.notify_all();
+
         let _ = py;
     }
 

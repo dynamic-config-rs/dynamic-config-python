@@ -1,25 +1,33 @@
 # Stability & Production Use
 
-**Beta, and the surface is finished for 0.x.**
+**Beta. The engine's surface is finished for 0.x; the binding's is not
+quite.**
 
 `dynamic-config-py` and `dynamic-config-py-remote` are Beta, like every
-crate and package in this repository. Between here and 1.0, **only
-security fixes and hotfixes land**: no new sources, no new schema kinds,
-no new methods on the settled types. What still ships is a defect that
-produces a wrong answer, a security advisory, and documentation — each as
-a patch.
+crate and package in this organisation. What that promise covers is
+precise, and it changed once:
 
-That is a change of intent rather than of policy, and it is worth saying
-plainly because the two look identical from outside: a project that
-publishes weekly because it is growing and one that publishes rarely
-because it is finished are both quiet. This is the second.
+- **The engine — sources, layering, validation, diagnostics — is
+  settled.** No new sources, no new schema kinds, no new methods on the
+  settled types. What ships there is a defect that produces a wrong
+  answer, a security advisory, and documentation.
+- **The binding's concurrency surface was not settled, and 0.2 says so.**
+  `ConfigGroup`, `events()`, dispatched hooks and `AsyncRemoteSource`
+  are additions to this package, made after using the 0.1 surface from
+  an asyncio service and finding the seams. Additive, so nothing written
+  against 0.1 changed meaning — but additions, not hotfixes, and calling
+  they are additions rather than hotfixes, and the version says so.
+
+Between 0.2 and 1.0 the intent is the earlier one again: security fixes,
+hotfixes, documentation. If that changes a second time it will be
+written here in the same place, rather than discovered in a diff.
 
 ## What that means for your program
 
 **Pin the minor version and take patches automatically.**
 
 ```
-dynamic-config-py ~= 0.1.2
+dynamic-config-py ~= 0.2.0
 ```
 
 A patch will not break you. Pre-1.0 a break bumps the minor, is called out
@@ -92,7 +100,7 @@ alert on. The
 **Give the last-known-good cache a path that survives a restart.** A
 `redacted` cache means a broken source at startup is a warning rather than
 an outage — and it refuses to write at all unless the configuration has
-said what is secret, which is the point.
+said what is secret.
 
 **Watch the watcher.** A file watcher is not a promise that a file will be
 watched: a container bind mount and some network filesystems deliver no

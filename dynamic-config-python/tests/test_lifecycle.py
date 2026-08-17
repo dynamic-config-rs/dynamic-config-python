@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, field_validator
 
-from dynamic_config import DynamicConfig, InvalidError, ParseError
+from dynamic_config import DynamicConfig, InvalidError, ParseError, Watch
 
 
 class Database(BaseModel):
@@ -377,3 +377,82 @@ async def test_init_and_current_async_is_the_same_pair_awaited(
 
     assert db.port == 7
     assert config.generation == 1
+
+
+# ── The lifetime as a block ────────────────────────────────────────────
+
+
+def test_watching_stops_the_watcher_even_when_the_block_raises(
+    workspace: Path,
+) -> None:
+    Path("config.toml").write_text('[db]\nhost = "h"\nport = 1\n')
+
+    config = DynamicConfig(Database, key="db").file("config.toml")
+    config.init()
+    escaped: Watch | None = None
+
+    def fail_inside_the_block() -> None:
+        nonlocal escaped
+
+        with config.watching(debounce=0.05) as watch:
+            escaped = watch
+
+            assert watch.running
+
+            raise ZeroDivisionError("whatever the block was doing")
+
+    with pytest.raises(ZeroDivisionError):
+        fail_inside_the_block()
+
+    assert escaped is not None
+    assert not escaped.running
+
+
+def test_running_loads_watches_and_stops(workspace: Path) -> None:
+    Path("config.toml").write_text('[db]\nhost = "h"\nport = 1\n')
+
+    config = DynamicConfig(Database, key="db").file("config.toml")
+
+    with config.running(debounce=0.05) as model:
+        assert model.port == 1
+        assert config.current().port == 1
+
+        Path("config.toml").write_text('[db]\nhost = "h"\nport = 2\n')
+
+        for _ in range(100):
+            if config.generation > 1:
+                break
+
+            time.sleep(0.05)
+
+        assert config.current().port == 2, "the block watches, as it says it does"
+
+    assert config.generation > 1
+
+
+def test_running_without_a_watcher_only_loads(workspace: Path) -> None:
+    Path("config.toml").write_text('[db]\nhost = "h"\nport = 1\n')
+
+    config = DynamicConfig(Database, key="db").file("config.toml")
+
+    with config.running(watch=False) as model:
+        assert model.port == 1
+
+        Path("config.toml").write_text('[db]\nhost = "h"\nport = 2\n')
+        time.sleep(0.2)
+
+        assert config.current().port == 1, "nothing is watching, so nothing reloads"
+
+
+async def test_running_async_is_the_lifespan_shape(workspace: Path) -> None:
+    Path("config.toml").write_text('[db]\nhost = "h"\nport = 1\n')
+
+    config = DynamicConfig(Database, key="db").file("config.toml")
+
+    async with config.running_async(debounce=0.05) as model:
+        assert model.port == 1
+
+    async with config.watching_async(debounce=0.05) as watch:
+        assert watch.running
+
+    assert not watch.running

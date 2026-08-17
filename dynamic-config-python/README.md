@@ -85,7 +85,8 @@ def resize(old, new):
 ```
 
 Every blocking call has an async twin that runs the work off the loop —
-`init_async`, `load_async`, `reload_async` — plus two ways to wait:
+`init_async`, `load_async`, `reload_async` — plus three ways to wait, and
+a hook that runs where you say:
 
 ```python
 await config.init_async()
@@ -94,13 +95,34 @@ model = await config.changed_async(timeout=30)   # the next install, once
 
 async for db in config.changes():                # every install, forever
     await pool.resize(db.pool_size)
+
+async for event in config.events():              # what installed, what was refused
+    log.info("configuration %s", event)
+
+@config.on_reload_async                          # a task on this loop
+async def reconnect(previous, current):
+    await pool.resize(current.pool_size)
 ```
 
-Cancelling either wait is noticed within a quarter second, and leaves the
-engine untouched. Which thread pool pays for the blocking half is yours
-to choose — `dynamic_config.set_executor(pool)` process-wide, or
-`DynamicConfig(..., executor=pool)` for one configuration — the same
-question the Rust crate's `set_blocking_executor` answers.
+**No wait polls.** One notifier thread per configuration is parked in the
+engine with the GIL released and shared by every awaiting task on it, so
+cancelling a wait is immediate, an idle service does no work at all, and
+the executor stays free for loads. Which thread pool pays for the
+blocking half is yours to choose — `dynamic_config.configure_executor(2)`
+process-wide, or `DynamicConfig(..., executor=pool)` for one
+configuration — the same question the Rust crate's `set_blocking_executor`
+answers.
+
+Several configurations that share a lifetime can say so:
+
+```python
+group = ConfigGroup(database, cache, queue)
+
+async with group.running_async():   # init all, watch all, stop all
+    await serve()
+
+group.reload_atomic()               # every member validates, or none installs
+```
 
 A reload that Pydantic rejects **keeps the previous model serving** —
 exactly as a bad file edit does. Nothing installs, the last-known-good

@@ -33,7 +33,7 @@ S3 and Vault — each mirroring its Rust crate's builder.
 | `S3` | AWS SDK, async | tokio | A `ProvideCredentials` chain — see [below](#s3-the-credential-that-is-a-trait) |
 | `Vault` | `ureq`, blocking | none | A login that buys a token with a TTL |
 
-## Why it is a second wheel
+## A second wheel
 
 A wheel is built per platform, so a dependency in the ordinary wheel is
 in every install of it — including the ones reading a single TOML file.
@@ -212,7 +212,7 @@ it is *not* needed are worth naming:
 | `S3` | The key pair — but nothing is rebuilt, because the SDK asks per request |
 | `Git` | The https token — and nothing is rebuilt either, for a different reason: rebuilding would throw away the object database |
 
-Three of them read a *file* instead, and deliberately:
+Three of them read a *file* instead:
 `ConsulAuth.kubernetes(...)` and `Auth.kubernetes(...)` carry a **path**,
 which the Rust crate re-reads at every login, so a projected
 service-account token the kubelet rotates already works with no callable
@@ -224,7 +224,7 @@ that mounts it somewhere else can say where without spelling
 callable, reading the file on every fetch.
 
 **`Git` is the second store whose rotation rebuilds nothing**, and the
-reason is worth stating because it is not S3's. A `GitSource` owns a
+reason is not S3's. A `GitSource` owns a
 working directory — a bare object database, filled by the first fetch —
 so rebuilding one would discard every object it holds and re-transfer the
 repository's whole tree, for a store whose headline property is that an
@@ -567,7 +567,7 @@ Two consequences fall out of the slot, and both are improvements:
   protect rather than a connection pool.)
 - **The SDK's identity cache has to be off.** It exists to keep a provider
   that calls IMDS from being called per request, and it caches a
-  credential with no expiry *indefinitely* — which for a deliberately
+  credential with no expiry *indefinitely* — which for a
   mutable slot would mean the first key signing every request forever.
   `IdentityCache::no_cache()` costs nothing here, because the provider it
   defeats is a mutex read.
@@ -576,7 +576,7 @@ Two consequences fall out of the slot, and both are improvements:
 
 - **The clients' own configuration types.** `etcd`'s `ConnectOptions`,
   Vault's, Consul's and Firestore's `ureq::Agent`, NATS' `ConnectOptions`
-  and S3's `SdkConfig` are all taken by their Rust builders deliberately,
+  and S3's `SdkConfig` are all taken by their Rust builders,
   so that options this project has never heard of keep working. There is
   no Python spelling for a `tonic` configuration or a `ureq` agent, so a
   **custom proxy**, a hand-built connector or a DNS resolver belongs to a
@@ -835,7 +835,7 @@ The `ssh` **binary must be on the host** for the last three: `gix` carries an
 SSH stream by spawning it, exactly as `git` does — and in exchange everything
 already configured for `ssh` works.
 
-`ssh_key` takes a path and no callable, deliberately: `ssh` opens the file at
+`ssh_key` takes a path and no callable: `ssh` opens the file at
 every fetch, so a key an operator replaces is picked up already. **A passphrase
 is not accepted in any spelling** — `ssh` has no way to take one that does not
 put it on a command line where `ps` can read it, so a passphrase-protected key

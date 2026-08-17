@@ -25,7 +25,7 @@ otherwise would be worse than saying it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, TypeVar
 
 from ._config import DynamicConfig
 from ._core import DynamicConfigError
@@ -38,6 +38,28 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 M = TypeVar("M")
+
+
+if TYPE_CHECKING:
+
+    class _ConfigOf:
+        """``Model.config``, typed as *that model's* configuration.
+
+        A `ClassVar` cannot carry a type variable, so ``config`` cannot be
+        declared as ``DynamicConfig[Self]`` the way the methods below are
+        declared as returning `Self`. What can is a descriptor whose
+        ``__get__`` is generic over the class it is read from — the device
+        `classmethod` itself uses in typeshed. So
+        ``Database.config.current()`` is a ``Database`` and
+        ``Database.config.changes()`` yields one, rather than both being
+        `Any`.
+
+        Declared under `TYPE_CHECKING` and nowhere else: the decorator
+        assigns a real `DynamicConfig` into the decorated class's own
+        ``__dict__``, and that is what every read at runtime finds.
+        """
+
+        def __get__(self, instance: object, owner: type[M]) -> DynamicConfig[M]: ...
 
 
 class Configured:
@@ -55,17 +77,31 @@ class Configured:
 
     #: The configuration the decorator built. Set at decoration; reading
     #: it before then is an `AttributeError` that names this class.
-    config: ClassVar[DynamicConfig[Any]]
+    #:
+    #: Two annotations for one name, and both are load-bearing. The
+    #: checker gets a descriptor, so ``Database.config`` is
+    #: ``DynamicConfig[Database]`` rather than ``DynamicConfig[Any]`` —
+    #: see :class:`_ConfigOf`. Pydantic gets `ClassVar`, because a plain
+    #: annotation on a mixin is a *model field*, and every model
+    #: inheriting this would grow one called ``config``.
+    if TYPE_CHECKING:
+        config: _ConfigOf
+    else:
+        config: ClassVar[Any]
 
     @classmethod
     def current(cls) -> Self:
-        """The installed model. Raises before the first successful load."""
-        return cast("Self", cls.config.current())
+        """The installed model. Raises before the first successful load.
+
+        No cast: ``cls.config`` is this class's configuration, so what it
+        installs is already this class.
+        """
+        return cls.config.current()
 
     @classmethod
     def try_current(cls) -> Optional[Self]:
         """The installed model, or ``None`` before the first load."""
-        return cast("Optional[Self]", cls.config.try_current())
+        return cls.config.try_current()
 
     @classmethod
     def reload(cls) -> None:

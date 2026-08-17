@@ -7,7 +7,8 @@
 //! before anything installs, and the validated model is staged there and
 //! published by whichever path finished the install.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, Weak};
 
 use dynamic_config::{Aliases, Builder, Dynamic, EnvBindings, Error, Layer, Remote};
@@ -106,6 +107,14 @@ pub(super) enum Engine {
 pub(super) struct Wake {
     pub(super) generation: Mutex<u64>,
     pub(super) changed: Condvar,
+    /// Set once, by `release`, and the only wake that is not an install.
+    ///
+    /// A waiter blocks until the generation moves — which, for a
+    /// configuration nothing reloads again, is never. The Python binding
+    /// parks one thread per configuration to bridge those wakes onto an
+    /// event loop, and that thread has to be able to end: this is what
+    /// ends it.
+    pub(super) closed: AtomicBool,
 }
 
 /// One validated tree, waiting to be published.
@@ -117,6 +126,12 @@ pub(super) struct Staged {
 
 pub(super) struct Inner {
     pub(super) key: String,
+    /// Commits that `prepare` produced and `commit` has not run yet, by
+    /// token. A `ReloadGroup` in Rust keeps these on its stack; a Python
+    /// caller holds a token instead, so they live here until they are
+    /// committed or discarded.
+    pub(super) prepared: Mutex<HashMap<u64, dynamic_config::Commit>>,
+    pub(super) next_prepared: AtomicU64,
     /// The sequence of the most recently published model; a commit for
     /// anything at or below it has already happened.
     pub(super) last_committed: AtomicU64,

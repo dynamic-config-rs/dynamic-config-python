@@ -246,3 +246,109 @@ def test_the_module_declares_itself_gil_free() -> None:
         "importing the extension re-enabled the GIL: the module is missing "
         "Py_MOD_GIL_NOT_USED (`#[pymodule(gil_used = false)]`)"
     )
+
+
+def test_a_notifier_resolves_waiters_registered_from_many_threads(
+    workspace: Path,
+) -> None:
+    """The notifier's waiter list is mutated from two directions at once.
+
+    Registrations arrive on whichever thread runs the awaiting loop; the
+    resolution happens on the notifier's own. Under a GIL the list
+    operations are atomic by accident — the lock inside `Notifier` is what
+    has to make them atomic on purpose.
+    """
+    import asyncio
+
+    write(1)
+    config = DynamicConfig(Database, key="db").file("config.toml")
+    config.init()
+
+    resolved: list[int] = []
+    ready = threading.Barrier(5)
+    failures: list[BaseException] = []
+
+    def wait_on_its_own_loop() -> None:
+        async def wait() -> None:
+            ready.wait(timeout=30)
+            model = await config.changed_async(timeout=30)
+
+            if model is not None:
+                resolved.append(model.port)
+
+        try:
+            asyncio.run(wait())
+        except BaseException as failure:
+            failures.append(failure)
+
+    waiting = [threading.Thread(target=wait_on_its_own_loop) for _ in range(4)]
+
+    for thread in waiting:
+        thread.start()
+
+    ready.wait(timeout=30)
+
+    # Every waiter is registered by now, on four different loops.
+    for _ in range(20):
+        write(2)
+        config.reload()
+
+        if all(not thread.is_alive() for thread in waiting):
+            break
+
+        import time
+
+        time.sleep(0.05)
+
+    for thread in waiting:
+        thread.join(timeout=30)
+
+    assert not failures, f"a waiter raised: {failures[:2]}"
+    assert len(resolved) == 4, f"only {len(resolved)} of four waiters woke"
+
+
+@only_free_threaded
+def test_a_group_reloads_atomically_while_readers_run(workspace: Path) -> None:
+    """Prepare-then-commit, with real readers watching for a mixed state."""
+    from dynamic_config import ConfigGroup
+
+    Path("config.toml").write_text(
+        '[db]\nhost = "h"\nport = 1\n[cache]\nhost = "h"\nport = 1\n'
+    )
+
+    database = DynamicConfig(Database, key="db").file("config.toml")
+    cache = DynamicConfig(Database, key="cache").file("config.toml")
+    group = ConfigGroup(database, cache)
+    group.init()
+
+    stop = threading.Event()
+    mixed: list[tuple[int, int]] = []
+
+    def read() -> None:
+        while not stop.is_set():
+            pair = (database.current().port, cache.current().port)
+
+            if pair[0] != pair[1]:
+                mixed.append(pair)
+
+    readers = [threading.Thread(target=read) for _ in range(3)]
+
+    for reader in readers:
+        reader.start()
+
+    for port in range(2, 40):
+        Path("config.toml").write_text(
+            f'[db]\nhost = "h"\nport = {port}\n[cache]\nhost = "h"\nport = {port}\n'
+        )
+        group.reload_atomic()
+
+    stop.set()
+
+    for reader in readers:
+        reader.join(timeout=60)
+
+    # The commits are still two stores, so a reader between them sees the
+    # older half — what atomicity buys is that no *refusal* can leave the
+    # two apart for good, which the other tests assert. This one only has
+    # to show the window is not a tear.
+    assert all(abs(first - second) <= 1 for first, second in mixed), mixed[:3]

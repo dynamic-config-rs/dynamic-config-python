@@ -1,7 +1,7 @@
 # Implementation Details
 
 How the binding is built, for anyone changing it — or deciding whether to
-trust it. This page is what the code does, which is not always what the
+trust it. What follows is what the code does, which is not always what the
 design document that preceded it said; that document has been retired
 now that every decision in it either shipped or was replaced by one
 recorded here.
@@ -29,10 +29,10 @@ recorded here.
 conversion, and the one place Python is entered on a reload.
 **`dynamic_config`** is ordinary Python around it — the generic
 `DynamicConfig`, the decorator, the asyncio bridge, the secret
-derivation. That split is deliberate: typing, introspection and event
+That split holds because typing, introspection and event
 loops are all clearer in Python, and none of them is on the read path.
 
-## Where validation happens, and why it is there
+## Where validation happens
 
 The binding registers Pydantic validation as the engine's own `validate`
 hook, which the loader calls **after deserializing and before installing
@@ -59,7 +59,7 @@ paths arrive at that publish:
 1. the engine's own `on_reload` hook, which fires for every install after
    the first;
 2. the explicit call after `init()` or `reload()` returns, which is what
-   covers the first install (the engine skips hooks there, deliberately —
+   covers the first install (the engine skips hooks there —
    installing is not reloading).
 
 Both call the same `commit`, and both can arrive for one install. A
@@ -98,12 +98,21 @@ init, reload, a watch-driven reload, `replace`, and recovery.
   thread blocked on the mutex is a thread holding the GIL the first one
   needs. The threading suite found exactly that, and the fix was to make
   the engine an `Arc` that callers clone and use outside the lock.
-- **Hooks run on the thread that reloaded.** A raising hook is reported
-  through Python's unraisable channel and the rest still run — the
-  crate's panic-isolation contract in Python's vocabulary.
-- **Waits release the GIL** and are bounded (a quarter second per slice),
-  so cancelling an `async for` is noticed promptly rather than at the
-  next reload.
+- **Hooks run on the thread that reloaded**, unless the registration said
+  otherwise (`dispatch=`). A raising hook is reported — through Python's
+  unraisable channel for one that ran on a thread, through the loop's
+  exception handler for one that ran as a task — and the rest still run,
+  which is the crate's panic-isolation contract in Python's vocabulary.
+  Whatever the dispatch, what the engine calls is a fast synchronous
+  function that hands the work elsewhere and returns: an install never
+  waits for a callback it did not run itself.
+- **A wait releases the GIL and is not bounded.** Since 0.2 one notifier
+  thread per configuration parks in `wait_for_change` with no timeout and
+  resolves every awaiting task's future through
+  `loop.call_soon_threadsafe`. Two things can wake it: an install, or
+  `release()` — which is why the wake structure carries a `closed` flag
+  as well as a generation. Cancelling an `async for` is immediate,
+  because the task drops its future rather than outlasting a slice.
 - **A Python remote source is called straight through**, not handed to a
   worker thread. `refresh_remote()` detaches for the whole refresh and
   the shim re-takes the GIL only to call `fetch()`; the design note that
@@ -155,7 +164,7 @@ paths — and seeds the same secret list the generated Rust `builder()`
 seeds. The names used are the ones a *file* could carry — **all** of
 them: the field name and every alias Pydantic accepts, whether that is a
 plain string, an `AliasPath`, an `AliasChoices` of either, or one an
-`alias_generator` wrote. Deliberately generous, because the two errors
+`alias_generator` wrote. Generous, because the two errors
 are not symmetrical: listing a name nothing supplies costs a key that
 never appears, and missing one puts a password in `explain` and in the
 "redacted" cache on disk. That was not hypothetical — the earlier rule
@@ -194,7 +203,7 @@ there the caller is *supplying* the value.
 ## What the wheel contains
 
 `cdylib` + PyO3 `abi3-py39`: one wheel per platform covers every
-supported interpreter. The remote store crates are deliberately absent —
+supported interpreter. The remote store crates are absent —
 their clients would multiply the build matrix and ride into every wheel.
 That is also why the wheel carries no tokio: the Rust `tokio` feature
 routes the crate's *own* async loads into tokio's blocking pool, and this

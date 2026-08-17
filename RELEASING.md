@@ -33,12 +33,18 @@ them, and mints the tag and the GitHub release itself, at the merge commit.
 2. **Pre-flight.** `just check` on `dev`, and
    `just python-free-threaded /path/to/venv` when anything touched
    threading, the GIL, or a global.
-3. **`./scripts/release-python.sh --check`.** It refuses a version that is
-   already on PyPI — and that is not hypothetical: 0.1.0 shipped with one
-   release, the next wave prepared 0.1.0 again, and `maturin upload
-   --skip-existing` made the whole wave a silent no-op. It also checks that
-   the two manifests agree, that the floor matches, and that there is
-   something under `## [Unreleased]` to release.
+3. **`./scripts/release-python.sh --check minor`** — the target, not the
+   version the tree is on. That one has already been released, so a bare
+   `--check` always reports it as taken, which says nothing about the
+   release being planned. It refuses a version that is already on PyPI —
+   and that is not hypothetical: 0.1.0 shipped with one release, the next
+   wave prepared 0.1.0 again, and `maturin upload --skip-existing` made
+   the whole wave a silent no-op. It also checks that the two manifests
+   agree, that the floor matches, and that there is something under
+   `## [Unreleased]` to release.
+
+   Optional, strictly: step 4 runs the same check on the same target
+   before it changes a file, and stops there if anything fails.
 4. **`./scripts/release-python.sh patch`** (or `minor`; pre-1.0 a breaking
    change is `minor`). Bumps both, rotates both changelogs, moves the
    floor, and makes one local commit — no push, no tag, no publish.
