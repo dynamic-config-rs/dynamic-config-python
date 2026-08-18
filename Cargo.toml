@@ -23,21 +23,21 @@ authors = ["Cevat Batuhan Tolon <cevatbatuhan.tolon@gmail.com>"]
 # The engine. `default-features = false` because each crate names what it
 # needs: the base wheel carries every feature a Python caller can reach,
 # the remote wheel only what a document needs to travel.
-dynamic-config = { version = "0.6", default-features = false }
+dynamic-config = { version = "0.7", default-features = false }
 # The store crates' shared internals: the redaction that keeps a password
 # out of a store's description, by the same rule the store crates use
 # rather than by a second copy of it.
-dynamic-config-store-core = "0.6"
+dynamic-config-store-core = "0.7"
 # The eight stores. Caret, because a wheel built today should be able to
 # pick up a store's patch release without this repository being re-cut.
-dynamic-config-consul = "0.6"
-dynamic-config-etcd = { version = "0.6", features = ["tls"] }
-dynamic-config-firestore = "0.6"
-dynamic-config-git = "0.6"
-dynamic-config-nats = "0.6"
-dynamic-config-redis = { version = "0.6", features = ["tls"] }
-dynamic-config-s3 = "0.6"
-dynamic-config-vault = "0.6"
+dynamic-config-consul = "0.7"
+dynamic-config-etcd = { version = "0.7", features = ["tls"] }
+dynamic-config-firestore = "0.7"
+dynamic-config-git = "0.7"
+dynamic-config-nats = "0.7"
+dynamic-config-redis = { version = "0.7", features = ["tls"] }
+dynamic-config-s3 = "0.7"
+dynamic-config-vault = "0.7"
 
 # A wheel is downloaded, not compiled by whoever installs it, so the
 # release profile is the one that matters.
@@ -47,12 +47,3 @@ codegen-units = 1
 strip = "symbols"
 
 # ── 0.7 TRAIN, DEVELOPMENT ONLY ─────────────────────────────────────────
-# The wheels are being built against engine API that is not on crates.io
-# yet (the log sink, then the new formats). This patch points at the
-# sibling checkout so the two can move together; `release-python.sh
-# --check` REFUSES to prepare a release while it is present, so it cannot
-# reach a published wheel. Removing it (and floors moving to 0.7) is a
-# release-train step, not an oversight.
-[patch.crates-io]
-dynamic-config = { path = "../dynamic-config/dynamic-config" }
-dynamic-config-macros = { path = "../dynamic-config/dynamic-config-macros" }
