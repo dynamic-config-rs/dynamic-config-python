@@ -157,7 +157,10 @@ impl Inner {
     ///
     /// The GIL is taken here and nowhere else on the load path.
     pub(super) fn validate(shared: &Shared, tree: &Value) -> Result<(), Error> {
-        Python::attach(|py| {
+        // Through the finalization gate: a reload that arrives while the
+        // interpreter is shutting down is skipped, not validated against
+        // a Python that is being torn down.
+        let validated = crate::gate::attach(|py| {
             let data = convert::to_py(py, tree)
                 .map_err(|failure| Error::invalid(describe(py, &failure)))?;
 
@@ -186,6 +189,12 @@ impl Inner {
                     Err(Error::invalid(scrub_validation(py, &failure)))
                 }
             }
+        });
+
+        validated.unwrap_or_else(|| {
+            Err(Error::invalid(
+                "the interpreter is shutting down; the reload was skipped",
+            ))
         })
     }
 
@@ -337,7 +346,9 @@ impl Inner {
                     return;
                 };
 
-                Python::attach(|py| {
+                // Gated: a commit racing finalization is dropped, not
+                // delivered to a dying interpreter.
+                crate::gate::attach(|py| {
                     if let Err(failure) = inner.commit(py, current) {
                         failure.write_unraisable(py, None);
                     }

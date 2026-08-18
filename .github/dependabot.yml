@@ -1,6 +1,10 @@
 version: 2
 
 updates:
+  # No pip block, deliberately: the wheels embed the engine rather than
+  # depending on Python packages, and the extras (pydantic, msgspec) are
+  # floors a library must not ratchet for its users. The OSV job in
+  # security.yml is what watches those ecosystems for advisories.
   # Cargo updates are grouped: what a wheel links is reviewed as one tree.
   - package-ecosystem: cargo
     directory: /

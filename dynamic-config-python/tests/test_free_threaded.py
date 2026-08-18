@@ -347,8 +347,13 @@ def test_a_group_reloads_atomically_while_readers_run(workspace: Path) -> None:
     for reader in readers:
         reader.join(timeout=60)
 
-    # The commits are still two stores, so a reader between them sees the
-    # older half — what atomicity buys is that no *refusal* can leave the
-    # two apart for good, which the other tests assert. This one only has
-    # to show the window is not a tear.
-    assert all(abs(first - second) <= 1 for first, second in mixed), mixed[:3]
+    # The commits are still two stores, db first then cache, and the
+    # reader reads in that same order. Scheduling can park a reader
+    # between its two reads, so the cache half may be arbitrarily
+    # *newer* — whole write cycles pass while the thread is off-CPU.
+    # That is preemption, not a tear, and a two-core runner shows it
+    # constantly. A tear has a direction: the half committed FIRST seen
+    # more than one commit ahead of the half read after it. That
+    # direction is the assertion.
+    torn = [(first, second) for first, second in mixed if first - second > 1]
+    assert not torn, (len(mixed), torn[:5])

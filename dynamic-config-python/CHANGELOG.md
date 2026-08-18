@@ -26,6 +26,48 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.0 — 2026-08-18
+
+### Fixed
+
+- **A free-threaded interpreter could segfault on exit mid-reload.** A
+  watcher thread attaching to Python while finalization tears the
+  runtime down crashed free-threaded 3.14 (the GIL build used to park
+  such a thread instead). The `atexit` sweep now closes a finalization
+  gate first: background attaches from that point on are refused —
+  reloads skipped, not delivered to a dying interpreter — and the ones
+  in flight are waited out while the interpreter is still whole. This
+  also makes `Watch.detach()`'s "built to survive exit" promise true on
+  free-threaded builds, which is where it was not.
+
+### Changed (book)
+
+- **The book opens with a Quick Start**, and the 477-line introduction
+  became three pages: the pitch, Core Concepts, and The Decorator &
+  Typing. The 991-line Rust-stores page split the same way: narrative,
+  a credentials/TLS/runtime cookbook, and a per-store reference.
+
+### Changed
+
+- **The engine's diagnostics arrive through `logging` now.** ⚠️ From the
+  first import, the lines the compiled engine used to write straight to
+  file descriptor 2 — `[dynamic-config] db#1: reloaded in 0ms`, the
+  failed-reload warnings, the last-known-good recovery notice — are
+  ordinary records on `logging.getLogger("dynamic_config.engine")`.
+  Handlers, formatters, filters, `caplog` and structured logging all see
+  them; nothing is written to raw stderr any more unless asked.
+
+  The bridge never takes the GIL on an engine thread: lines cross a
+  bounded channel to one forwarder thread, overflow is counted and
+  reported in the next delivered record, and the whole thing stands down
+  at interpreter exit. A script that configures no logging still sees
+  warnings via `logging`'s last-resort handler; the INFO reload lines
+  become opt-in, which is the one visible change.
+
+  `configure_logging(level=...)` sets the engine-side volume in
+  `logging`'s units, and `configure_logging(raw_stderr=True)` restores
+  the 0.2 behaviour wholesale for the deployment that greps stderr.
+
 ## 0.2.0 — 2026-08-18
 
 ### Added

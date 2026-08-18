@@ -15,7 +15,7 @@ every wheel for every user, including the ones reading a single TOML file.
 > client for — and for the capabilities the wheels do not expose, such as
 > a custom proxy or a `watch()` that pushes. TLS is no longer one of
 > those: a private certificate authority and a client certificate are
-> [`TlsConfig`](remote-wheel.md#tls-a-private-authority-and-a-client-certificate),
+> [`TlsConfig`](remote-auth.md#tls-a-private-authority-and-a-client-certificate),
 > which every store in the second wheel takes.
 
 What ships in the base wheel is the **door**. Any object with `fetch()` and

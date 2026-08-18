@@ -108,4 +108,7 @@ events, and `poll_interval` is the answer there rather than a mystery.
 
 **Nothing here needs a sidecar, an agent or a server.** The engine is in
 your process, the reads are lock-free, and the only thing that leaves is
-what a remote store you configured goes to fetch.
+what a remote store you configured goes to fetch. (The organisation's
+Kubernetes integration *offers* an agent, for pods that want files
+rendered for them — that is a deployment choice layered on top, not a
+requirement of this library, and this sentence stays true either way.)
