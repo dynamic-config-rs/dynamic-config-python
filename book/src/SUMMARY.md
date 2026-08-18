@@ -4,6 +4,9 @@
 
 # Guide
 
+- [Quick Start](quick-start.md)
+- [Core Concepts](concepts.md)
+- [The Decorator & Typing](decorator-and-types.md)
 - [API Reference](reference.md)
 - [Data Types](types.md)
 - [Callbacks](callbacks.md)
@@ -20,6 +23,8 @@
 - [Telemetry](telemetry.md)
 - [Remote Stores in Python](remote-stores.md)
 - [Remote Stores in Rust](remote-wheel.md)
+  - [Credentials, TLS & the Runtime](remote-auth.md)
+  - [Store Reference](remote-reference.md)
 - [Free-Threaded CPython](free-threading.md)
 - [Implementation Details](internals.md)
 

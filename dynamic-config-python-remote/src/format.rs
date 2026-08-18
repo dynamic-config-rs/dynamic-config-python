@@ -17,9 +17,11 @@ pub(crate) fn parsed(named: &str) -> PyResult<Format> {
         "json" => Ok(Format::Json),
         "toml" => Ok(Format::Toml),
         "yaml" | "yml" => Ok(Format::Yaml),
+        "ini" => Ok(Format::Ini),
+        "properties" => Ok(Format::Properties),
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{other:?} is not a document format — expected \"json\", \"toml\" \
-             or \"yaml\""
+            "{other:?} is not a document format — expected \"json\", \"toml\", \
+             \"yaml\", \"ini\" or \"properties\""
         ))),
     }
 }
@@ -38,9 +40,8 @@ pub(crate) fn maybe(named: Option<&str>) -> PyResult<Option<Format>> {
 
 /// The name the base wheel's `Format` answers to.
 pub(crate) fn named(format: Format) -> &'static str {
-    match format {
-        Format::Json => "json",
-        Format::Toml => "toml",
-        Format::Yaml => "yaml",
-    }
+    // `feature()` names every variant — the wildcard-free spelling the
+    // 0.7 migration guide prescribes, so the next format is additive
+    // here too.
+    format.feature()
 }

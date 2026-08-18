@@ -307,6 +307,8 @@ fn format_of(value: &Bound<'_, PyAny>, description: &str) -> Result<Format, Erro
         "json" => Ok(Format::Json),
         "toml" => Ok(Format::Toml),
         "yaml" | "yml" => Ok(Format::Yaml),
+        "ini" => Ok(Format::Ini),
+        "properties" => Ok(Format::Properties),
         other => Err(Error::remote(format!(
             "`{description}`: {other:?} is not a document format — expected \
              Format.JSON, Format.TOML or Format.YAML"

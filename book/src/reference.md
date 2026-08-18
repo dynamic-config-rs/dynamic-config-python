@@ -61,7 +61,7 @@ The same four methods take a **compiled** store from the opt-in second
 wheel (`pip install dynamic-config-py[remote]`): `Etcd(...)` and
 `Vault(...)` from `dynamic_config.remote` are `RemoteSource`
 implementations like any other, and their API is
-[on its own page](remote-wheel.md#api) because they are a separate
+[on its own page](remote-reference.md#api) because they are a separate
 distribution.
 
 | Synchronous | Async twin | Does |
@@ -392,7 +392,7 @@ unchanged; what changes is that `Database.current()` is typed as
 `Database` rather than being an `attr-defined` error, and that
 `Database.config` is `DynamicConfig[Database]` — so everything reached
 through it, `changes()` and `changed_async()` included, stays the
-model's own type. See [the decorator](introduction.md#the-decorator).
+model's own type. See [the decorator](decorator-and-types.md#the-decorator).
 
 ## Types
 

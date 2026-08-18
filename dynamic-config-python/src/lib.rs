@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 mod config;
 mod convert;
 mod errors;
+mod logbridge;
 mod remote;
 mod telemetry;
 
@@ -31,6 +32,11 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(module)?;
     config::register(module)?;
     telemetry::register(module)?;
+    logbridge::register(module)?;
+
+    // From the first import, the engine's diagnostics travel through
+    // `logging` instead of raw stderr — the behaviour the changelog flags.
+    logbridge::install();
     module.add("__doc__", "The compiled engine behind dynamic_config.")?;
 
     // Two numbers, because they move on two schedules: the package's

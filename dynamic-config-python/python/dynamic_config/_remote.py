@@ -45,6 +45,8 @@ class Format(str, enum.Enum):
     JSON = "json"
     TOML = "toml"
     YAML = "yaml"
+    INI = "ini"
+    PROPERTIES = "properties"
 
     def __str__(self) -> str:
         """The format's name, so an f-string reads as the document does."""

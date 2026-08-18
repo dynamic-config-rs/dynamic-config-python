@@ -48,7 +48,7 @@ fetch resolves one commit — so it is the only place where the missing
 adding to this list. A private certificate authority and a client
 certificate are the settings a hardened deployment actually needs, and
 they reach Python because the Rust surface for them was built as
-[**data**](remote-wheel.md#tls-a-private-authority-and-a-client-certificate)
+[**data**](remote-auth.md#tls-a-private-authority-and-a-client-certificate)
 — paths and PEM bytes, with no client type in any signature — rather than
 as another door onto a client's own type. Two stores cannot express all of
 it and **refuse the part they cannot** rather than ignoring it: `Nats`
@@ -135,7 +135,7 @@ owns one rather than turning the engine's feature on. etcd's client is
 async, so something has to drive its `fetch`; that is one runtime, two
 worker threads, started when the first store that needs one is
 constructed and never shut down. The
-[whole story](remote-wheel.md#the-tokio-runtime) — including what happens
+[whole story](remote-auth.md#the-tokio-runtime) — including what happens
 if the calling thread is already inside somebody else's runtime, and why
 an immortal runtime is safe here — is on that page.
 

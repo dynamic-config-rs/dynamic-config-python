@@ -45,3 +45,14 @@ dynamic-config-vault = "0.6"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# ── 0.7 TRAIN, DEVELOPMENT ONLY ─────────────────────────────────────────
+# The wheels are being built against engine API that is not on crates.io
+# yet (the log sink, then the new formats). This patch points at the
+# sibling checkout so the two can move together; `release-python.sh
+# --check` REFUSES to prepare a release while it is present, so it cannot
+# reach a published wheel. Removing it (and floors moving to 0.7) is a
+# release-train step, not an oversight.
+[patch.crates-io]
+dynamic-config = { path = "../dynamic-config/dynamic-config" }
+dynamic-config-macros = { path = "../dynamic-config/dynamic-config-macros" }

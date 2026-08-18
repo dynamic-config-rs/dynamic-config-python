@@ -5,6 +5,17 @@ after that — install, reload, watch, hooks, diagnostics — mirrors the Rust
 crate one call at a time. The read path deliberately never crosses back
 into Rust: each installed model is published onto this object by a hook,
 so `current()` is an attribute lookup.
+
+
+Maintainer's note, 0.7 review: this file is large because `DynamicConfig`
+is large — 1,500 of these lines are one cohesive generic class, and the
+0.7 maintainability pass looked hard at splitting it. The verdict was no:
+every candidate cut (lifecycle / reads / hooks / async) shares the same
+lock, the same `_core` handle and the same invariants, so a split means
+mixins whose halves cannot be understood alone — more files, more
+indirection, the same coupling. The dispatchers and `_Gate` at the bottom
+are the parts that genuinely stand alone, and they are already at the
+bottom for that reason.
 """
 
 from __future__ import annotations

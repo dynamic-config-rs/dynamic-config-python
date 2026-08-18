@@ -92,6 +92,7 @@ from ._events import ConfigEvent, Reloaded, ReloadFailed
 from ._executor import configure_executor, executor, set_executor
 from ._group import ConfigGroup
 from ._lifetime import HookGuard, Watch
+from ._logging import configure_logging
 from ._remote import AsyncRemoteSource, Format, RemoteSource
 from ._schema import secret_paths
 from ._telemetry import ConfigStatus, Exposition, Failure, RemoteStatus
@@ -149,6 +150,7 @@ __all__ = [
     "__version__",
     "changed_paths",
     "configure_executor",
+    "configure_logging",
     "dynamic_config",
     "executor",
     "secret_paths",
