@@ -28,6 +28,18 @@ breaking.
 
 ## 0.3.0 — 2026-08-18
 
+### Fixed
+
+- **A free-threaded interpreter could segfault on exit mid-reload.** A
+  watcher thread attaching to Python while finalization tears the
+  runtime down crashed free-threaded 3.14 (the GIL build used to park
+  such a thread instead). The `atexit` sweep now closes a finalization
+  gate first: background attaches from that point on are refused —
+  reloads skipped, not delivered to a dying interpreter — and the ones
+  in flight are waited out while the interpreter is still whole. This
+  also makes `Watch.detach()`'s "built to survive exit" promise true on
+  free-threaded builds, which is where it was not.
+
 ### Changed (book)
 
 - **The book opens with a Quick Start**, and the 477-line introduction

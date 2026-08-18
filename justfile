@@ -33,7 +33,10 @@ python:
 # The opt-in remote wheel: the same gate, pointed at the other directory.
 # Needs `just python` to have run — its tests import the base package.
 python-remote:
-    CARGO_TARGET_DIR=target/python maturin develop -m dynamic-config-python-remote/Cargo.toml
+    # Its own target dir, not `target/python`: both wheels name their
+    # cdylib `_core`, so one shared dir is one shared `lib_core.so` —
+    # whichever wheel built last would be copied into BOTH packages.
+    CARGO_TARGET_DIR=target/python-remote maturin develop -m dynamic-config-python-remote/Cargo.toml
     cd dynamic-config-python-remote && python -m pytest tests -q
     cd dynamic-config-python-remote && mypy --strict python/dynamic_config_remote/
     cd dynamic-config-python-remote && ruff check .

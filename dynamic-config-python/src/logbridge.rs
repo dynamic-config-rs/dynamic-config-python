@@ -158,7 +158,10 @@ fn forward(receiver: Receiver<Line>) {
             return;
         }
 
-        let outcome = Python::attach(|py| deliver(py, level, &line));
+        // Gated like every other background attach; a `None` here means
+        // finalization won the race and the line goes where CLOSING sends
+        // the rest.
+        let outcome = crate::gate::attach(|py| deliver(py, level, &line));
 
         // A logging failure must not kill the bridge; the next line tries
         // again, and `logging`'s own lastResort already spoke for this one.

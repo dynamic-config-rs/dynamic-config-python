@@ -180,10 +180,16 @@ def _release_everything() -> None:
     """Stops every watcher and drops every cached model, before teardown.
 
     A watcher thread that outlives finalization would call into a Python
-    that is no longer there — the classic embedding crash. Stopping the
-    threads here, while the interpreter is still whole, is what makes that
-    impossible rather than unlikely.
+    that is no longer there — the classic embedding crash. Two moves make
+    that impossible rather than unlikely, in order: the finalization gate
+    closes — every background attach from here on is refused, and the
+    ones in flight are waited out while the interpreter is still whole —
+    and then the watchers this sweep can reach are stopped. A detached
+    watcher keeps running, and the gate is what makes that survivable:
+    its reloads simply stop being delivered.
     """
+    _core._interpreter_closing()
+
     for watch in _snapshot(_LIVE_WATCHES):
         # Teardown is best effort: an object already torn down by an
         # earlier handler must not stop the ones after it.

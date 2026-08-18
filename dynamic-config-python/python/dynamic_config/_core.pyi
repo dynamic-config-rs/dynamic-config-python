@@ -137,3 +137,10 @@ def _stop_log_bridge() -> None:
 
 def _set_engine_log_level(level: int) -> None:
     """The engine-side volume, in `logging`'s units. Negative is off."""
+
+def _interpreter_closing() -> None:
+    """Closes the finalization gate, first thing in the `atexit` sweep.
+
+    New background attaches are refused and the ones in flight are
+    waited out — while the interpreter is still whole.
+    """

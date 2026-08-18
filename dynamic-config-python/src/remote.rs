@@ -226,7 +226,8 @@ impl RemoteSource for PyRemoteSource {
         // the source out of its own state lock before calling, and the
         // object below is cloned out of its slot before Python is entered.
         // That is what lets a `fetch()` call back into the extension.
-        Python::attach(|py| {
+        // Gated: a refresh racing finalization reports itself skipped.
+        let fetched = crate::gate::attach(|py| {
             let source = slot
                 .object
                 .lock()
@@ -250,6 +251,12 @@ impl RemoteSource for PyRemoteSource {
                 Ok(answer) => fetched(&answer, &self.description),
                 Err(failure) => Err(slot.record(py, &failure, &self.description)),
             }
+        });
+
+        fetched.unwrap_or_else(|| {
+            Err(Error::remote(
+                "the interpreter is shutting down; the fetch was skipped",
+            ))
         })
     }
 
