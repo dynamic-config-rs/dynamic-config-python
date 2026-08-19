@@ -26,6 +26,8 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.1 — 2026-08-19
+
 ### Fixed
 
 - **A wake could be lost when an install raced the notifier thread's
