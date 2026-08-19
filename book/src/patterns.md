@@ -100,6 +100,12 @@ call that refuses to leave two of them new and one of them old.
 The group is lifecycle only. `db.current()` is still the read path,
 because nothing should sit between a program and its values.
 
+One rule bounds what atomic means: the writes are all-or-nothing, the
+reads are not — two `current()` calls are two reads, and a reader
+landing between the group's installs can see new `db` beside old
+`cache` for an instant. Two values that must always be read together
+belong in **one** configuration, where a single snapshot carries both.
+
 ## Testing without a filesystem
 
 ```python

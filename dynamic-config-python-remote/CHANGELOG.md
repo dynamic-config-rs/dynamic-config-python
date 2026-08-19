@@ -30,9 +30,17 @@ is the door into this one.
 
 ## [Unreleased]
 
+## 0.3.1 — 2026-08-19
+
 ## 0.3.0 — 2026-08-18
 
 ## 0.2.0 — 2026-08-18
+
+### Changed
+
+- **Built on the 0.8 store crates and engine 0.8** — the same
+  build-time bump as the base wheel, with the Python surface
+  unchanged. The development-only `[patch.crates-io]` block is gone.
 
 ### Changed
 

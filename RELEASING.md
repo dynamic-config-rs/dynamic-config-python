@@ -68,9 +68,14 @@ that is already on `main` — it dispatches the same workflow by hand.
 
 ## What an operator has to have ready
 
-`PYPI_TOKEN` as a repository secret, with upload rights to both projects.
-Nothing else: the wheels are built by `maturin-action` on GitHub's own
-runners, and the token is the only thing that is not in this repository.
+**No token.** The publish job authenticates through PyPI's Trusted
+Publishing (OIDC): the one-time console entry per project — PyPI →
+project → Settings → Publishing → *Add a trusted publisher* — names
+owner `dynamic-config-rs`, repository `dynamic-config-python`,
+workflow `release.yml`, for both `dynamic-config-py` and
+`dynamic-config-py-remote`. The wheels are built by `maturin-action`
+on GitHub's own runners; a leftover `PYPI_TOKEN` secret is inert and
+should be revoked.
 
 ## Afterwards
 

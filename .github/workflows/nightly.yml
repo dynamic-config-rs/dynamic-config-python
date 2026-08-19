@@ -1,0 +1,26 @@
+name: Nightly
+
+# The binding-side leak budget: callback and notifier lifecycles are
+# where leaks hide even when the Rust core is clean. The engine's
+# nightly carries the 5-hour soak; these legs churn the binding's own
+# machinery a million times and hold the deltas to a budget.
+on:
+  schedule:
+    - cron: "23 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  leak:
+    name: a million reloads leak nothing
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@2e3e4b15a884dc73a63f962bff250a855150a234 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install dynamic-config-py
+      - run: LEAK_RELOADS=1000000 python scripts/leak.py

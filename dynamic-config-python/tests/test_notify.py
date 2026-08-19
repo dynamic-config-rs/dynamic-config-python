@@ -214,14 +214,15 @@ async def test_events_reports_installs(workspace: Path) -> None:
     assert event.at > 0
 
 
-async def test_events_reports_a_refusal_when_it_is_asked_to_poll(
+async def test_events_reports_a_refusal_natively(
     workspace: Path,
 ) -> None:
+    """No poll interval: the refusal itself wakes the stream."""
     config = configured()
     events: list[object] = []
 
     async def consume() -> None:
-        async for event in config.events(failure_poll=0.05):
+        async for event in config.events():
             events.append(event)
 
     consumer = asyncio.create_task(consume())
@@ -254,6 +255,35 @@ async def test_events_reports_a_refusal_when_it_is_asked_to_poll(
     assert isinstance(failure, ReloadFailed)
     assert failure.kind == "invalid"
     assert failure.consecutive == 1
+
+
+async def test_events_failure_poll_is_accepted_and_warns(
+    workspace: Path,
+) -> None:
+    """The 0.3.0 parameter still parses; it just no longer does anything."""
+    config = configured()
+    write(2)
+    config.reload()
+
+    received: list[object] = []
+
+    with pytest.warns(DeprecationWarning, match="failure_poll is ignored"):
+        stream = config.events(failure_poll=1.0)
+
+    async def consume() -> None:
+        async for event in stream:
+            received.append(event)
+            break
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.sleep(0.1)
+
+    write(3)
+    config.reload()
+    await asyncio.wait_for(consumer, timeout=5)
+
+    assert len(received) == 1
+    assert isinstance(received[0], Reloaded)
 
 
 async def test_no_event_carries_a_value(workspace: Path) -> None:

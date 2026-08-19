@@ -55,7 +55,7 @@ clients in it.
 | Size (Linux x86-64, release) | 1.36 MB | 11.68 MB |
 | Extension module | `dynamic_config._core` | `dynamic_config_remote._core` |
 | tokio | never | one runtime, lazily |
-| MSRV | 1.85 | 1.88 — `aws-sdk-sts`, `async-nats` and `redis` each ask for it. `gix` asks for 1.85 and so moves nothing |
+| MSRV | 1.88 | 1.88 — one floor for the whole organisation since the 0.3.1 round |
 
 One wheel rather than one per store, and the size table is why. Eight
 build matrices is eight times the release runner for a saving nobody has

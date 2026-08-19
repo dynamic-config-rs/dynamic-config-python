@@ -14,10 +14,9 @@ from dynamic_config import DynamicConfig, DynamicConfigError, Reloaded, ReloadFa
 
 async def watch_events(config: DynamicConfig[Database]) -> None:
     """What a log line, a metric or an alert is built from."""
-    # `failure_poll` is what makes refusals visible: an install wakes this
-    # stream, and a refusal cannot — the engine bumps no generation for a
-    # load that installed nothing.
-    async for event in config.events(failure_poll=0.05):
+    # A refusal wakes this stream natively — the engine's failure hook
+    # signals the same parked thread an install does, so nothing polls.
+    async for event in config.events():
         if isinstance(event, ReloadFailed):
             print(
                 f"  ✗ refused at generation {event.generation}: {event.kind}"

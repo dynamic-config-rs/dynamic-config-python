@@ -6,9 +6,17 @@ parent. Configuration survives that fork. A watcher does not.
 
 ## What each process gets
 
+**Four workers are four engines are four watches.** There is no shared
+snapshot, no master coordinating reloads, no cross-process anything:
+each worker owns a full copy of the engine, reloads on its own schedule
+from the same file, and none of them has to tell the others. Every
+multi-process surprise below is that sentence, met somewhere
+unexpected — a metric that counts one worker's reloads, a `set_override`
+that patched one process, an `on_reload` hook that fired a quarter of
+the times you expected.
+
 Each worker gets its own copy of everything, including its own watcher, and
-that is what you want — every worker reloads independently from the same
-file, and none of them has to tell the others.
+that is what you want.
 
 ```console
 $ gunicorn -w 4 --preload myapp:app
@@ -67,3 +75,53 @@ print([t.name for t in threading.enumerate() if "dynamic-config" in t.name])
 
 If a worker shows none and reloads never arrive, the watcher started before
 the fork.
+
+## The whole thing, runnable
+
+Three files; `gunicorn -c gunicorn.conf.py -w 4 --preload app:app` and
+then edit `config.json` while it serves.
+
+```python
+# config.py — the declaration, imported by both app and conf
+from dataclasses import dataclass
+from dynamic_config import DynamicConfig
+
+
+@dataclass
+class Database:
+    host: str = "localhost"
+    pool_size: int = 8
+
+
+database = DynamicConfig(Database, key="db").file("config.json")
+```
+
+```python
+# app.py — a WSGI app; init at import time so --preload parses once
+import json
+
+from config import database
+
+database.init()
+
+
+def app(environ, start_response):
+    current = database.current()  # this worker's snapshot, this instant
+    start_response("200 OK", [("Content-Type", "application/json")])
+
+    import os
+    return [json.dumps({"pid": os.getpid(), "pool": current.pool_size}).encode()]
+```
+
+```python
+# gunicorn.conf.py — the one hook that matters
+def post_fork(server, worker):
+    from config import database
+
+    database.watch(debounce=0.25)  # this worker's watcher, born after the fork
+```
+
+Edit `config.json` and every worker's next response carries the new
+value — four pids, one document, no coordination. Delete the
+`post_fork` hook and rerun to watch the failure mode itself: the same
+edit changes nothing, in any worker, forever.

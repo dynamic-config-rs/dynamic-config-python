@@ -119,7 +119,7 @@ engine reads it on the load path and a load must not re-enter Python.
 | `replace(model)` | — | Installs a model you built, firing the hooks. `status()` and `snapshot()` still describe the last real load |
 | `changed(timeout=None)` | `changed_async(timeout=None)` | Blocks until the next install; `None` on timeout |
 | — | `changes()` | An async iterator over every install from here on |
-| — | `events(failure_poll=None)` | An async iterator of [`Reloaded`](#reloaded-and-reloadfailed) and `ReloadFailed`. No event carries a value |
+| — | `events()` | An async iterator of [`Reloaded`](#reloaded-and-reloadfailed) and `ReloadFailed` — refusals wake it natively. No event carries a value |
 | `watch(debounce=0.25, poll_interval=None)` | `watch_async(…)` | Starts a watcher; returns a [`Watch`](#watch) |
 | `watching(debounce=0.25, poll_interval=None)` | `watching_async(…)` | The same as a block, stopped on the way out |
 | `running(watch=True, …)` | `running_async(watch=True, …)` | init, then watch, then stop — the whole lifetime as one block, yielding the first model |
