@@ -26,6 +26,43 @@ breaking.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wake could be lost when an install raced the notifier thread's
+  first breath.** The thread read its baseline generation on its own
+  first instruction — so an install landing after a waiter's
+  check-register-check but before the thread was scheduled folded into
+  the baseline and was never reported; under load, `changed_async`
+  timed out on an install that had already happened. The baseline is
+  now read on the caller's thread, under the registration lock, before
+  `wait` returns — the same discipline for `events()`' notifier, which
+  carried the identical pattern from birth.
+
+### Changed
+
+- **Built on engine 0.8.** The engine's breaking release (a `LoadSpec`
+  field, MSRV 1.88) is a build-time fact here — the wheel embeds it
+  statically and the Python surface is unchanged, which is why this
+  release stays a patch. The development-only `[patch.crates-io]`
+  block is gone: wheels build from exactly what crates.io serves.
+
+### Changed
+
+- **A refused reload wakes `events()` natively.** The engine's 0.7.1
+  failure hook signals the same parked notifier thread an install does,
+  so `ReloadFailed` arrives when the refusal happens rather than at the
+  next poll — and the stream starts no timer at all. Delivery is
+  latest-wins, like `changes()`: coalesced refusals arrive as one event
+  carrying the current `consecutive` count, and a refusal followed by an
+  install arrives as both events, refusal first. The limitations page's
+  "a refused reload cannot wake anything" section retires with this.
+
+### Deprecated
+
+- **`events(failure_poll=...)`** is accepted, ignored, and warns once:
+  the interval refusals were polled at, now that they wake the stream
+  themselves. Remove the argument; the parameter goes away in 0.4.
+
 ## 0.3.0 — 2026-08-18
 
 ### Fixed

@@ -115,6 +115,10 @@ pub(super) struct Wake {
     /// event loop, and that thread has to be able to end: this is what
     /// ends it.
     pub(super) closed: AtomicBool,
+    /// Bumped — under the `generation` lock, so a waiter whose predicate
+    /// reads it cannot miss the wake — by the engine's failure hook.
+    /// What lets `events()` deliver a refusal without a timer.
+    pub(super) refusals: AtomicU64,
 }
 
 /// One validated tree, waiting to be published.
@@ -353,6 +357,25 @@ impl Inner {
                         failure.write_unraisable(py, None);
                     }
                 });
+            });
+
+            // The refusal wake: no Python, no GIL — a counter and the
+            // condition variable. `events()` reads `status()` itself, so
+            // nothing crosses here but "something was refused".
+            let weak: Weak<Inner> = Arc::downgrade(this);
+            dynamic.on_reload_failed(move |_status| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+
+                let guard = inner
+                    .wake
+                    .generation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                inner.wake.refusals.fetch_add(1, Ordering::Release);
+                inner.wake.changed.notify_all();
+                drop(guard);
             });
 
             *engine = Engine::Ready(Arc::new(dynamic));

@@ -11,10 +11,8 @@ name = "dynamic-config-python-remote"
 # declared in `pyproject.toml` rather than assumed.
 version = "0.3.0"
 edition.workspace = true
-# The highest floor of anything linked in, measured rather than declared:
-# PyO3, etcd and `gix` ask for 1.85, and `aws-sdk-sts`, `async-nats` and
-# `redis` ask for 1.88 — so the wheel that carries all eight stores asks for
-# 1.88.
+# The organisation's one 1.88 floor — originally forced here anyway by
+# `aws-sdk-sts`, `async-nats` and `redis`, measured rather than declared.
 rust-version = "1.88"
 license.workspace = true
 description = "The Rust remote stores for dynamic-config's Python bindings, as a second wheel"

@@ -61,7 +61,7 @@ from ._errors import NotInitialisedError
 from ._events import ConfigEvent, Reloaded, ReloadFailed
 from ._executor import default_executor
 from ._lifetime import _LIVE_CONFIGS, HookGuard, Watch, _register
-from ._notify import Notifier
+from ._notify import EventNotifier, Notifier
 from ._remote import AsyncRemoteSource, RemoteSource, _AwaitedDocument
 from ._schema import is_values_type, schema_for
 from ._settings import (
@@ -74,11 +74,6 @@ from ._settings import (
 from ._telemetry import ConfigStatus, RemoteStatus
 
 M = TypeVar("M")
-
-#: What :meth:`DynamicConfig._tick` answers when the interval elapsed and
-#: no install arrived. A sentinel rather than `None`, which already means
-#: *this configuration was released*.
-_TICK = object()
 
 
 def _refusal(status: ConfigStatus, consecutive: int) -> ReloadFailed:
@@ -117,6 +112,7 @@ class DynamicConfig(Generic[M]):
         "_async_remote",
         "_cached",
         "_core",
+        "_event_notifier_instance",
         "_executor",
         "_model",
         "_notifier_instance",
@@ -237,6 +233,7 @@ class DynamicConfig(Generic[M]):
         # The event-loop bridge, built on the first await and not before:
         # a purely synchronous program never starts a notifier thread.
         self._notifier_instance: Notifier | None = None
+        self._event_notifier_instance: EventNotifier | None = None
         # The model the last `events()` turn reported, for `changed`.
         # Set by `remote()` when the store is an `AsyncRemoteSource`.
         self._async_remote: _AwaitedDocument | None = None
@@ -256,6 +253,19 @@ class DynamicConfig(Generic[M]):
             self._notifier_instance = Notifier(self._core, self.key)
 
         return self._notifier_instance
+
+    def _event_notifier(self, loop: object) -> EventNotifier:
+        """The `events()` twin of :meth:`_notifier`, woken by refusals too.
+
+        Separate on purpose: a configuration whose only consumers are
+        `changes()` keeps a thread that refusals never wake.
+        """
+        del loop
+
+        if self._event_notifier_instance is None:
+            self._event_notifier_instance = EventNotifier(self._core, self.key)
+
+        return self._event_notifier_instance
 
     @classmethod
     def from_settings(
@@ -1233,9 +1243,7 @@ class DynamicConfig(Generic[M]):
 
             yield model
 
-    async def events(
-        self, failure_poll: float | None = None
-    ) -> AsyncIterator[ConfigEvent]:
+    def events(self, failure_poll: float | None = None) -> AsyncIterator[ConfigEvent]:
         """Every install *and* every refusal, as typed events.
 
         :meth:`changes` is the model stream a service loop wants; this is
@@ -1253,28 +1261,37 @@ class DynamicConfig(Generic[M]):
         only — the same rule every other diagnostic here follows, and for
         the same reason: a value in an event is a secret in a log.
 
+        A refusal wakes this stream **natively**: the engine's failure
+        hook signals the same parked thread an install does, so
+        :class:`ReloadFailed` arrives when the refusal happens, not at the
+        next poll. Delivery is latest-wins, like :meth:`changes`: several
+        refusals with nothing awake in between arrive as one event
+        carrying the current ``consecutive`` count, and a refusal followed
+        by an install arrives as both events, refusal first, because that
+        is the order they occurred in.
+
         Parameters:
-            failure_poll: seconds between checks for a *refused* reload,
-                or ``None`` — the default — for installs only.
-
-                An install wakes this stream; a refusal cannot, because
-                the engine bumps no generation for a load that installed
-                nothing, and there is nothing to be notified of. So a
-                stream that wants :class:`ReloadFailed` asks for it, and
-                pays a status read at the interval it names. Nothing is
-                started when it is ``None``: no timer, no thread, no
-                wake-up.
-
-                One second is a reasonable choice for a watcher on a
-                deployment path. The refusal that matters — a watcher
-                reloading a file somebody has just broken — is otherwise
-                invisible here until the next successful install, which
-                in an outage is exactly the thing that is not coming.
+            failure_poll: **deprecated, ignored.** The interval refusals
+                used to be polled at, when a refusal could not wake
+                anything. It can now, so the stream no longer needs — or
+                starts — a timer; passing a value changes nothing and
+                warns once.
         """
+        if failure_poll is not None:
+            warnings.warn(
+                "failure_poll is ignored: a refused reload wakes events() "
+                "natively now, and nothing is polled",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        return self._events()
+
+    async def _events(self) -> AsyncIterator[ConfigEvent]:
         loop = asyncio.get_running_loop()
-        notifier = self._notifier(loop)
-        failures = int(self.status().consecutive_failures)
+        notifier = self._event_notifier(loop)
         seen = int(self._core.generation)
+        seen_refusals = int(self._core.refusals)
         # The baseline for `changed`, and local to this stream: two
         # streams on one configuration each compare against what they
         # themselves last reported, rather than against each other.
@@ -1283,55 +1300,37 @@ class DynamicConfig(Generic[M]):
         while True:
             future = notifier.wait(loop)
             now = int(self._core.generation)
+            now_refusals = int(self._core.refusals)
 
-            if now > seen:
+            if now > seen or now_refusals > seen_refusals:
+                # Moved while the consumer's body was running, or between
+                # the lines above. Latest wins: what it gets is what is
+                # current, not a replay.
                 future.cancel()
-                wake: Any = (now, self.try_current())
-            elif failure_poll is None:
-                wake = await future
+                model = self.try_current() if now > seen else None
+                wake: Any = (now, now_refusals, model)
             else:
-                # One future across every tick, deliberately: a fresh one
-                # per tick would leave the old registered with nobody
-                # awaiting it, and the notifier would resolve a growing
-                # list of futures for one install.
-                while True:
-                    wake = await self._tick(future, failure_poll)
-
-                    if wake is not _TICK:
-                        break
-
-                    status = self.status()
-                    count = int(status.consecutive_failures)
-
-                    if count > failures:
-                        failures = count
-
-                        yield _refusal(status, count)
+                wake = await future
 
             if wake is None:  # released
                 return
 
-            generation, model = wake
+            generation, refusals, model = wake
 
-            if model is None:  # released before the first install
-                return
+            if refusals > seen_refusals:
+                seen_refusals = refusals
+                status = self.status()
+
+                yield _refusal(status, int(status.consecutive_failures))
 
             if generation <= seen:
                 continue
 
+            if model is None:  # released before the read landed
+                return
+
             seen = generation
             status = self.status()
-            count = int(status.consecutive_failures)
-
-            if count > failures:
-                # A refusal and then an install, with nothing awake in
-                # between: both happened, so both are reported, refusal
-                # first because that is the order they occurred in.
-                failures = count
-
-                yield _refusal(status, count)
-
-            failures = count
             before, previous = previous, model
 
             yield Reloaded(
@@ -1341,18 +1340,6 @@ class DynamicConfig(Generic[M]):
                 else (),
                 reason=str(status.last_reason) if status.last_reason else "manual",
             )
-
-    @staticmethod
-    async def _tick(future: Any, interval: float) -> Any:
-        """``future``'s result, or :data:`_TICK` if it takes longer.
-
-        ``wait`` rather than ``wait_for``: a timeout must not cancel this
-        future, which stays registered with the notifier and is awaited
-        again on the next turn.
-        """
-        done, _pending = await asyncio.wait({future}, timeout=interval)
-
-        return future.result() if done else _TICK
 
     def set_default(self, path: str, value: Any) -> None:
         """A fallback the program computes and a file need not state.

@@ -156,7 +156,7 @@ it, and so does anything else that provides a running loop.
 diagnostic one — what a log line, a metric or an alert is built from:
 
 ```python
-async for event in config.events(failure_poll=1.0):
+async for event in config.events():
     match event:
         case Reloaded(generation=generation, changed=paths):
             log.info("config %s: %s", generation, ", ".join(paths))
@@ -169,12 +169,14 @@ async for event in config.events(failure_poll=1.0):
 the same rule `explain()` and `check()` follow, and for the same reason:
 a value in an event is a secret in a log.
 
-`failure_poll` is what makes `ReloadFailed` possible. An install wakes
-the stream; a refusal cannot, because the engine bumps no generation for
-a load that installed nothing and there is nothing to be notified of. So
-a stream that wants refusals asks for them, and pays one status read at
-the interval it names. The default — `None` — starts no timer at all and
-reports installs only.
+A refusal wakes the stream natively: the engine's failure hook signals
+the same parked thread an install does, so `ReloadFailed` arrives when
+the refusal happens — no timer, no polling. Delivery is latest-wins:
+refusals with nothing awake in between arrive as one event carrying the
+current `consecutive` count, and a refusal followed by an install
+arrives as both events, refusal first. (`failure_poll`, the interval
+refusals were polled at before they could wake anything, is accepted,
+ignored, and warns once.)
 
 ## Loading several configurations at once
 

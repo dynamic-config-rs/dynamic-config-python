@@ -36,6 +36,12 @@ is the door into this one.
 
 ### Changed
 
+- **Built on the 0.8 store crates and engine 0.8** — the same
+  build-time bump as the base wheel, with the Python surface
+  unchanged. The development-only `[patch.crates-io]` block is gone.
+
+### Changed
+
 - **Moved with the base wheel**, as it always does — the two are built
   from one commit and `dynamic-config-py[remote]` resolves to a pair.
   Nothing in this distribution changed; the compiled stores are the same

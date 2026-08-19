@@ -15,6 +15,12 @@ That is the whole idea. The rest is what the arguments mean,
 what a hook may and may not do, and the four other shapes the same thing
 takes.
 
+The delivery semantics — edge-triggered, latest-wins, what a refused
+reload does and does not wake — are one contract across Rust, Python
+and Node, written once in the engine book's
+[Change Notification](https://dynamic-config-rs.github.io/change-notification.html)
+page. What follows is the Python surface of it.
+
 ## The shapes
 
 | Shape | Runs |

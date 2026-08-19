@@ -36,7 +36,7 @@ python examples/01_quick_start.py
 | [`24_async_callbacks`](24_async_callbacks.py) | `on_reload_async`, and what happens when installs outrun a hook: `latest` coalescing, `serial` dropping nothing, and a blocking hook moved off the installing thread with `Dispatch.EXECUTOR` |
 | [`25_async_remote_source`](25_async_remote_source.py) | `AsyncRemoteSource`: a store whose `fetch()` is a coroutine, awaited on the caller's loop — and what the synchronous `refresh_remote()` says about it |
 | [`26_atomic_group_reload`](26_atomic_group_reload.py) | `reload_atomic()`: every member validates or none installs, next to the per-member `reload()` that leaves a mixed state |
-| [`27_reload_events`](27_reload_events.py) | `events()`: `Reloaded` and `ReloadFailed` as typed events for a log or an alert, `failure_poll` for the refusals nothing can wake, and no value in any of them |
+| [`27_reload_events`](27_reload_events.py) | `events()`: `Reloaded` and `ReloadFailed` as typed events for a log or an alert — refusals wake the stream natively — and no value in any of them |
 
 Examples 10 to 12 need their framework installed, 15 needs
 pydantic-settings and 22 needs msgspec; 17 needs nothing at all, which is

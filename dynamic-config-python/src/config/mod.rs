@@ -182,6 +182,7 @@ impl Config {
                     generation: Mutex::new(0),
                     changed: Condvar::new(),
                     closed: AtomicBool::new(false),
+                    refusals: AtomicU64::new(0),
                 },
                 hooks: Mutex::new(Vec::new()),
                 next_hook: AtomicU64::new(1),
@@ -760,6 +761,14 @@ impl Config {
         })
     }
 
+    /// How many reloads have been refused since start: bumped once per
+    /// refusal, never reset. A property, not a call — the baseline an
+    /// event stream starts from.
+    #[getter]
+    fn refusals(&self) -> u64 {
+        self.inner.wake.refusals.load(Ordering::Acquire)
+    }
+
     /// The generation of the published model: bumped once per install. A
     /// property, not a call.
     #[getter]
@@ -840,6 +849,81 @@ impl Config {
         }
 
         Ok(self.current(py).map(|model| (reached, model)))
+    }
+
+    /// Blocks until an install *or* a refusal:
+    /// `wait_for_event(seen_generation, seen_refusals, timeout=None)`.
+    ///
+    /// Answers `(generation, refusals, model_or_None)` as soon as either
+    /// counter is past what the caller has seen — the model rides along
+    /// only when the generation moved. `None` means the timeout elapsed,
+    /// or the configuration was released; the caller tells them apart the
+    /// same way `wait_for_change`'s callers do, by asking again.
+    ///
+    /// The refusal counter is this binding's, bumped by the engine's
+    /// failure hook under the same lock this wait sleeps on — which is
+    /// what retired the polling that used to stand in for it.
+    #[pyo3(signature = (seen_generation, seen_refusals, timeout = None))]
+    #[allow(clippy::type_complexity)] // the tuple IS the wire format the stub declares
+    fn wait_for_event(
+        &self,
+        py: Python<'_>,
+        seen_generation: u64,
+        seen_refusals: u64,
+        timeout: Option<f64>,
+    ) -> PyResult<Option<(u64, u64, Option<Py<PyAny>>)>> {
+        let timeout = timeout.map(seconds).transpose()?;
+
+        let (generation, refusals) = py.detach(|| -> (u64, u64) {
+            let refusals = || self.inner.wake.refusals.load(Ordering::Acquire);
+            let closed = || self.inner.wake.closed.load(Ordering::Acquire);
+            let mut generation = self
+                .inner
+                .wake
+                .generation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+            match timeout {
+                Some(limit) => {
+                    let (guard, _timed_out) = self
+                        .inner
+                        .wake
+                        .changed
+                        .wait_timeout_while(generation, limit, |current| {
+                            *current <= seen_generation && refusals() <= seen_refusals && !closed()
+                        })
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+                    (*guard, refusals())
+                }
+                None => {
+                    while *generation <= seen_generation && refusals() <= seen_refusals && !closed()
+                    {
+                        generation = self
+                            .inner
+                            .wake
+                            .changed
+                            .wait(generation)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    }
+
+                    (*generation, refusals())
+                }
+            }
+        });
+
+        if generation <= seen_generation && refusals <= seen_refusals {
+            return Ok(None);
+        }
+
+        let model = if generation > seen_generation {
+            self.current(py)
+        } else {
+            None
+        };
+
+        Ok(Some((generation, refusals, model)))
     }
 
     /// Registers a callback run after every install: `on_reload(hook)`.

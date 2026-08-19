@@ -4,8 +4,8 @@
 
 **Hot-reloadable configuration for Python: Rust resolves, your schema validates.**
 
-[![CI](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/ci.yml)
-[![Security](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/security.yml)
+[![CI](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/ci.yml)
+[![Security](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/security.yml/badge.svg?event=pull_request)](https://github.com/dynamic-config-rs/dynamic-config-python/actions/workflows/security.yml)
 [![PyPI](https://img.shields.io/pypi/v/dynamic-config-py.svg)](https://pypi.org/project/dynamic-config-py/)
 [![Python](https://img.shields.io/pypi/pyversions/dynamic-config-py.svg)](https://pypi.org/project/dynamic-config-py/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -60,7 +60,7 @@ belongs to an unrelated package. The import is `dynamic_config`.
 
 ## The engine is a dependency, not a sibling
 
-These crates name it with a caret (`dynamic-config = "0.6"`), so an engine
+These crates name it with a caret (`dynamic-config = "0.7"`), so an engine
 patch release reaches them with no release here. The wheels version on
 their own schedule — a Rust-only release has nothing in it for a Python
 user, and a Python-only fix should not drag ten crates behind it.
@@ -71,7 +71,7 @@ user, and a Python-only fix should not drag ten crates behind it.
 |---|---|
 | CPython | 3.9 – 3.14, one abi3 wheel per platform |
 | free-threaded | 3.14t, its own wheel, tested with the GIL disabled |
-| MSRV (to build from source) | 1.85 — 1.88 for the remote wheel |
+| MSRV (to build from source) | 1.88, both wheels |
 
 Raising either floor is a breaking change.
 
@@ -80,6 +80,8 @@ Raising either floor is a breaking change.
 [CONTRIBUTING.md](CONTRIBUTING.md). `just check` needs a venv with
 maturin; `just python-free-threaded /path/to/venv` is the second
 interpreter.
+
+What you may build on and find unchanged tomorrow is written down: the [Compatibility Contract](https://dynamic-config-rs.github.io/compatibility.html).
 
 ## License
 
