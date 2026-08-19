@@ -36,7 +36,7 @@ jobs:
       # a visible PR diff, which is the point — semantics move only when
       # somebody says so.
       - run: |
-          ref="v0.7.1"   # the engine release these wheels build against
+          ref="v0.8.0"   # the engine release these wheels build against
           curl -sSL "https://github.com/dynamic-config-rs/dynamic-config/archive/refs/tags/${ref}.tar.gz" \
             | tar -xz --strip-components=1 --wildcards '*/conformance/'
       - uses: actions/setup-python@2e3e4b15a884dc73a63f962bff250a855150a234 # v6
