@@ -26,6 +26,21 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.2 — 2026-08-21
+
+### Changed
+
+- **Built on engine 0.9.** The engine's breaking release — resolution is
+  its own now, with the fold behind a swappable `Engine` and `figment`
+  optional — is a build-time fact here: this package embeds the engine
+  rather than depending on a published version of it, so the surface a
+  caller sees is unchanged. What travels with it is the engine's own
+  0.9 work: a load with one layer no longer folds it (a document, a
+  reload and an `explain` are all cheaper than 0.8's), a value nested
+  past sixty-four levels reads as a string rather than overflowing the
+  stack, and a variable whose name is not ASCII no longer aborts a load
+  that reads the environment.
+
 ## 0.3.1 — 2026-08-19
 
 ### Fixed

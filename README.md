@@ -60,8 +60,8 @@ belongs to an unrelated package. The import is `dynamic_config`.
 
 ## The engine is a dependency, not a sibling
 
-These crates name it with a caret (`dynamic-config = "0.7"`), so an engine
-patch release reaches them with no release here. The wheels version on
+These crates name it with a caret, so an engine patch release reaches
+them with no release here. The wheels version on
 their own schedule — a Rust-only release has nothing in it for a Python
 user, and a Python-only fix should not drag ten crates behind it.
 

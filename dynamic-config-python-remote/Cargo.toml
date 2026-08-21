@@ -9,7 +9,7 @@ name = "dynamic-config-python-remote"
 # release that moves the base wheel and not this one is fine (the extra keeps
 # working); the reverse is not, which is why the compatibility floor is
 # declared in `pyproject.toml` rather than assumed.
-version = "0.3.1"
+version = "0.3.2"
 edition.workspace = true
 # The organisation's one 1.88 floor — originally forced here anyway by
 # `aws-sdk-sts`, `async-nats` and `redis`, measured rather than declared.

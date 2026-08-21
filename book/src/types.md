@@ -82,7 +82,7 @@ Pydantic models and anything else with `model_dump`.
 
 ## Environment variables and types
 
-The environment is strings, and figment's loose parsing turns them into
+The environment is strings, and loose parsing turns them into
 what the field wants: `APP_DB_PORT=5432` reaches an `int`,
 `APP_DB_ENABLED=true` a `bool`. Loose parsing is ergonomic and ambiguous
 at the edges — `off` reads like a boolean and arrives as the string

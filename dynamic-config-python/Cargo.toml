@@ -13,7 +13,7 @@ name = "dynamic-config-python"
 # So this moves when *this* changes — a new Python API, a behaviour
 # change, or an engine bump worth shipping — and `maturin upload
 # --skip-existing` makes a release that changed nothing here a no-op.
-version = "0.3.1"
+version = "0.3.2"
 edition.workspace = true
 # Its own floor, not the workspace's 1.71: PyO3 needs more than the core does.
 rust-version = "1.88"
@@ -63,7 +63,7 @@ dynamic-config = { workspace = true, features = [
 # `abi3-py39` is not here: it moved to the `abi3` feature below, so the
 # free-threaded wheel can be built without it.
 pyo3 = { version = "0.29", features = ["extension-module"] }
-serde_json = "1.0.127"
+serde_json = "1.0.149"
 
 [features]
 # One wheel per platform covering every interpreter from 3.9 up — the reason
