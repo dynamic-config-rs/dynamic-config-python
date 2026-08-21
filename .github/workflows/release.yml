@@ -111,7 +111,7 @@ jobs:
       # directory make the second a cache hit on the first's artefact, and
       # the published wheel then carries the *other* package's extension —
       # a release that installs and then fails on a missing attribute.
-      - uses: PyO3/maturin-action@e10f6c464b90acceb5f640d31beda6d586ba7b4a # v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/python
         with:
@@ -165,7 +165,7 @@ jobs:
           # shell, and the build below is the step that needs it.
           Join-Path $dir 'bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           & (Join-Path $dir 'bin\protoc.exe') --version
-      - uses: PyO3/maturin-action@e10f6c464b90acceb5f640d31beda6d586ba7b4a # v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/python-remote
         with:
@@ -204,7 +204,7 @@ jobs:
               unzip -o /tmp/protoc.zip -d /usr/local
             fi
             protoc --version
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist
@@ -254,7 +254,7 @@ jobs:
       #
       # The remote wheel is deliberately not built here: it stays abi3-only
       # until somebody asks for it without a GIL.
-      - uses: PyO3/maturin-action@e10f6c464b90acceb5f640d31beda6d586ba7b4a # v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           args: >-
@@ -273,7 +273,7 @@ jobs:
             exit 1
           fi
           ls dist/*cp314-cp314t*.whl >/dev/null
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheels-freethreaded-${{ matrix.os }}-${{ matrix.target }}
           path: dist
@@ -302,7 +302,7 @@ jobs:
       # a release-train prerequisite and OUTSTANDING.md spells it out.
       id-token: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: wheels-*
           merge-multiple: true
