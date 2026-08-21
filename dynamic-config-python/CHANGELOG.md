@@ -26,6 +26,8 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.2 — 2026-08-21
+
 ### Changed
 
 - **Built on engine 0.9.** The engine's breaking release — resolution is
