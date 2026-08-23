@@ -26,6 +26,8 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.3 — 2026-08-23
+
 ### Added
 
 - **`AbsentError`.** A store that answers "that path holds nothing" raises
