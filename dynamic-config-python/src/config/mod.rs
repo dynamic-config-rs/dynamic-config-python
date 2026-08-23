@@ -1249,6 +1249,30 @@ impl Config {
             .unbind())
     }
 
+    /// A stable digest of the configuration installed, or `None` before
+    /// the first load. No parameters.
+    ///
+    /// `sha256:…`, over the resolved tree rather than any rendering of it,
+    /// so two processes agree whether their files were written as TOML or
+    /// as YAML. **Safe to log**: every field named to `secrets=[..]` is
+    /// masked by position before hashing, so the digest moves when a secret
+    /// appears or disappears and stays put when one merely rotates — a
+    /// digest that moved on rotation would be an oracle for the value that
+    /// moved it.
+    ///
+    /// What it is for is comparing two processes without comparing two
+    /// documents. `status().generation` counts *this* process's installs
+    /// and cannot answer that: two pods on generation 4 have nothing in
+    /// particular in common.
+    fn fingerprint(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let inner = Arc::clone(&self.inner);
+        let dynamic = self.inner.dynamic(py, &inner)?;
+
+        Ok(dynamic
+            .fingerprint()
+            .map(|fingerprint| (*fingerprint).clone()))
+    }
+
     /// The resolved section as data, without the model. No parameters.
     fn snapshot(&self, py: Python<'_>) -> PyResult<Snapshot> {
         let inner = Arc::clone(&self.inner);

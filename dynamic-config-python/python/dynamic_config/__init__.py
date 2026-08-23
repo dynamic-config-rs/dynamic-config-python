@@ -62,6 +62,7 @@ from __future__ import annotations
 from . import _core
 from ._config import DynamicConfig
 from ._core import (
+    AbsentError,
     AuthError,
     BackendError,
     DecryptError,
@@ -108,6 +109,7 @@ __version__: str = _core.__version__
 __engine_version__: str = _core.__engine_version__
 
 __all__ = [
+    "AbsentError",
     "AsyncRemoteSource",
     "AuthError",
     "BackendError",

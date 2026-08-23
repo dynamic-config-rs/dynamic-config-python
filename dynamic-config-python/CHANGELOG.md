@@ -26,6 +26,31 @@ breaking.
 
 ## [Unreleased]
 
+## 0.3.3 — 2026-08-23
+
+### Added
+
+- **`AbsentError`.** A store that answers "that path holds nothing" raises
+  its own class rather than the base one. Distinct from `RemoteError`, which
+  is an outage waiting cures, and from `MissingError`, which is a key absent
+  from a document that *was* read — the three deserve different answers, and
+  a program that cannot tell them apart serves a deleted secret forever.
+- **`fingerprint()`** — a stable digest of the configuration installed, or
+  `None` before the first load. `sha256:…`, over the resolved tree rather
+  than any rendering of it, so two processes agree whether their files were
+  written as TOML or as YAML.
+
+  **Safe to log**: every field named to `secrets=[..]` is masked by position
+  before hashing, so it moves when a secret appears or disappears and stays
+  put when one merely rotates — a digest that moved on rotation would be an
+  oracle for the value that moved it. It answers what
+  `status().generation` cannot: two processes on generation 4 have nothing
+  in particular in common.
+
+### Changed
+
+- The engine and the nine store crates move to **0.10**.
+
 ## 0.3.2 — 2026-08-21
 
 ### Changed

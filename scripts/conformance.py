@@ -38,7 +38,9 @@ def run_case(case: pathlib.Path) -> str | None:
         os.environ[key] = value
 
     try:
-        config = DynamicConfig(Values, key=args["key"]).file(str(case / "config.toml"))
+        config = DynamicConfig(
+            Values, key=args["key"], secrets=args.get("secrets", ())
+        ).file(str(case / "config.toml"))
 
         if prefix := args.get("env_prefix"):
             config = config.env(prefix)
@@ -63,12 +65,20 @@ def run_case(case: pathlib.Path) -> str | None:
             config.alias(old, new)
 
         resolved = plain(config.init_and_current())
+        # Only where a case pins one: every other case is a document
+        # comparison and asking for a digest it does not check would make
+        # this runner test the binding rather than the suite.
+        pinned = args.get("expected_fingerprint")
+        fingerprint = config.fingerprint() if pinned else None
     finally:
         for key in env:
             del os.environ[key]
 
     if resolved != expected:
         return f"resolved {json.dumps(resolved, sort_keys=True)} but expected {json.dumps(expected, sort_keys=True)}"
+
+    if pinned is not None and fingerprint != pinned:
+        return f"fingerprinted {fingerprint} but expected {pinned}"
 
     return None
 

@@ -56,7 +56,7 @@ does not fix its sources.
 
 | Field | Type | Means |
 |---|---|---|
-| `kind` | `str` | The category: `io`, `parse`, `missing`, `type`, `env`, `invalid`, `remote`, `auth`, `decrypt`, `backend` — the names the [exception classes](reference.md#exceptions) carry |
+| `kind` | `str` | The category: `io`, `parse`, `missing`, `type`, `env`, `invalid`, `remote`, `auth`, `absent`, `decrypt`, `backend` — the names the [exception classes](reference.md#exceptions) carry |
 | `path` | `str` | The dotted key path, empty when the failure belongs to the load as a whole |
 | `seconds_ago` | `float` | How long before the status was taken it was recorded |
 

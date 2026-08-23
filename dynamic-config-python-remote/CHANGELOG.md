@@ -30,6 +30,8 @@ is the door into this one.
 
 ## [Unreleased]
 
+## 0.3.3 — 2026-08-23
+
 ## 0.3.2 — 2026-08-21
 
 ### Changed
