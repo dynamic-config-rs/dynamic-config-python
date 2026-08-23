@@ -76,6 +76,16 @@ create_exception!(
 );
 create_exception!(
     _core,
+    AbsentError,
+    DynamicConfigError,
+    "The store answered, and the document is not there.\n\n\
+     Distinct from `RemoteError`, which is the store being unreachable, and \
+     from `MissingError`, which is a key absent from a document that was \
+     read. Waiting fixes an unreachable store; waiting does not bring back a \
+     deleted secret."
+);
+create_exception!(
+    _core,
     DecryptError,
     DynamicConfigError,
     "An encrypted source could not be decrypted."
@@ -98,6 +108,7 @@ fn class_for(py: Python<'_>, kind: ErrorKind) -> Bound<'_, PyType> {
         ErrorKind::Invalid => py.get_type::<InvalidError>(),
         ErrorKind::Remote => py.get_type::<RemoteError>(),
         ErrorKind::Auth => py.get_type::<AuthError>(),
+        ErrorKind::Absent => py.get_type::<AbsentError>(),
         ErrorKind::Decrypt => py.get_type::<DecryptError>(),
         ErrorKind::Backend => py.get_type::<BackendError>(),
         // `ErrorKind` is `#[non_exhaustive]`: a kind this binding predates
@@ -182,6 +193,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("InvalidError", module.py().get_type::<InvalidError>())?;
     module.add("RemoteError", module.py().get_type::<RemoteError>())?;
     module.add("AuthError", module.py().get_type::<AuthError>())?;
+    module.add("AbsentError", module.py().get_type::<AbsentError>())?;
     module.add("DecryptError", module.py().get_type::<DecryptError>())?;
     module.add("BackendError", module.py().get_type::<BackendError>())?;
 

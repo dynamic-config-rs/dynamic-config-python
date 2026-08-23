@@ -1552,6 +1552,25 @@ class DynamicConfig(Generic[M]):
         """The resolved section, without deserializing it into the model."""
         return Snapshot(self._core.snapshot())
 
+    def fingerprint(self) -> str | None:
+        """A stable digest of the configuration installed, or None.
+
+        ``sha256:…``, computed over the resolved tree rather than any
+        rendering of it, so two processes agree whether their files were
+        written as TOML or as YAML.
+
+        **Safe to log.** Every field named to ``secrets=[..]`` is masked by
+        position before hashing, so the digest moves when a secret appears
+        or disappears and stays put when one merely rotates — a digest that
+        moved on rotation would be an oracle for the value that moved it.
+
+        What it is for is comparing two processes without comparing two
+        documents. ``status().generation`` counts *this* process's installs
+        and cannot answer that: two pods on generation 4 have nothing in
+        particular in common.
+        """
+        return self._core.fingerprint()
+
     # ── Telemetry ──────────────────────────────────────────────────────
 
     def status(self) -> ConfigStatus:

@@ -543,6 +543,7 @@ instance carries `kind`, `path`, `origin_kind` and `origin`.
 | `InvalidError` | The configuration as a whole was rejected — Pydantic's report is on `.errors`, scrubbed of input values, and `[]` for a schema that raises a message rather than a report (a dataclass, a `msgspec.Struct`) |
 | `RemoteError` | A remote store could not be read — unreachable, refusing, malformed |
 | `AuthError` | A credential was rejected, or could not be obtained. Distinct from `RemoteError` on purpose: waiting fixes one and not the other |
+| `AbsentError` | The store answered, and the document is not there — a key deleted, a path that never existed. Distinct from `RemoteError`, which is an outage waiting cures, and from `MissingError`, which is a key absent from a document that *was* read |
 | `DecryptError` | An encrypted source could not be decrypted |
 | `BackendError` | The engine refused — a source added after loading, for instance |
 | `NotInitialisedError` | `current()` before the first successful load |
